@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '0.9.3';
+const VERSION = '0.9.5';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -959,6 +959,7 @@ async function pageFav(){
 }
 
 /* ============================================================ TOP 20 */
+let TOPTAB = lsGet('l9toptab', 'ml');   // 휴대폰: TOP 20 두 순위 중 보이는 쪽
 async function pageTop(){
   if(!readyWorlds().length) return noData();
   const [bp, ml] = await Promise.all([sorted('bp', ''), sorted('ml', '')]);
@@ -978,9 +979,10 @@ async function pageTop(){
     <div class="bar"><span class="sid g">TOP 20 탑랭커 <em style="margin-left:10px">${esc(scopeName())}</em></span>
       <span style="margin-left:auto;font-size:12px;color:var(--dim)">기준일 ${esc(D.meta.date)}</span></div>
     ${partialNote()}<div class="ctrls">${scopeCtrls()}</div>
-    <div class="tops">
-      <div><div class="sec" style="border-top:0">대표 마스터리 TOP 20 <small>같은 레벨이면 전투력 순</small></div>${podium(ml, 'ml')}${table(ml, 'ml')}</div>
-      <div><div class="sec" style="border-top:0">전투력 TOP 20</div>${podium(bp, 'bp')}${table(bp, 'bp')}</div>
+    <div class="toptab">${seg('top-tab', TOPTAB, [['ml', '대표 마스터리 TOP 20'], ['bp', '전투력 TOP 20']])}</div>
+    <div class="tops" data-tab="${TOPTAB}">
+      <div class="tml"><div class="sec tsec" style="border-top:0"><span class="tbadge">마스터리</span>대표 마스터리 TOP 20 <small>같은 레벨이면 전투력 순</small></div>${podium(ml, 'ml')}${table(ml, 'ml')}</div>
+      <div class="tbp"><div class="sec tsec" style="border-top:0"><span class="tbadge">전투력</span>전투력 TOP 20</div>${podium(bp, 'bp')}${table(bp, 'bp')}</div>
     </div></section>`;
 }
 
@@ -1462,13 +1464,15 @@ async function exportCsv(){
 }
 
 /* ============================================================ 배경음악 (열면 자동 재생) */
+// 음악 버튼 아이콘: 글자 기호(⏸ ⏭)는 아이폰에서 이모티콘으로 바뀌어 그림으로 그림
+const ICO = {play: `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>`, pause: `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z" fill="currentColor"/></svg>`, up: `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 10.5l5-5 5 5z" fill="currentColor"/></svg>`, down: `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5.5l5 5 5-5z" fill="currentColor"/></svg>`};
 const BG = {player:null, ready:false, playing:false, shuffle:false, list:DEFAULT_PLAYLIST, vol:40, mini:true, auto:true, muted:false, apiFailed:false};
 function parseList(s){ s = (s || '').trim(); const m = s.match(/[?&]list=([A-Za-z0-9_-]+)/); if(m) return m[1]; return /^[A-Za-z0-9_-]{10,}$/.test(s) ? s : null; }
 function bgmUI(){
   const box = $('#bgm');
   box.classList.toggle('playing', BG.playing); box.classList.toggle('mini', BG.mini); box.classList.toggle('muted', BG.muted && BG.playing);
-  $('#bgmPlay').textContent = $('#bgmPlay2').textContent = BG.playing ? '⏸' : '▶';
-  $('#bgmFold').textContent = BG.mini ? '▴' : '▾';
+  $('#bgmPlay').innerHTML = $('#bgmPlay2').innerHTML = BG.playing ? ICO.pause : ICO.play;
+  $('#bgmFold').innerHTML = BG.mini ? ICO.up : ICO.down;
   $('#bgmShuf').classList.toggle('on', BG.shuffle);
   $('#bgmAuto').classList.toggle('on', BG.auto);
 }
@@ -1571,6 +1575,7 @@ document.addEventListener('click', async ev => {
     // 범위 · 랭킹
     else if(act === 'sc-scope'){ SC.scope = b.dataset.v; saveSC(); RK.page = 0; render(); }
     else if(act === 'rk-by'){ RK.by = b.dataset.v; RK.page = 0; lsSet('l9rank', JSON.stringify({by: RK.by})); render(); }
+    else if(act === 'top-tab'){ TOPTAB = b.dataset.v; lsSet('l9toptab', TOPTAB); await render(); }
     else if(act === 'my-reset'){ ST.cur = null; ST.recent = []; saveSession(); await render(); window.scrollTo({top: 0}); toast('캐릭터 화면을 초기화했습니다 (추적 · 즐겨찾기는 그대로)'); }
     else if(act === 'cg-per'){ CG.per = Number(b.dataset.v); CG.page = 0; CG.mv = 24; saveCG(); await render(); }
     else if(act === 'cg-kind'){ CG.kind = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }

@@ -12,7 +12,7 @@
 <title>로드나인 캐릭터 추적기</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/galmuri@2.40.3/dist/galmuri.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/vt323@5.2.7/index.css">
-<link rel="stylesheet" href="style.css?v=0.9.3">
+<link rel="stylesheet" href="style.css?v=0.9.5">
 </head>
 <body>
 <div class="vign"></div>
@@ -55,18 +55,18 @@
     <div class="eqz" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
     <span class="tt">배경음악</span>
     <div class="song" id="bgmSong"><span>불러오는 중</span></div>
-    <button class="ib" data-act="bgm-play" id="bgmPlay" title="재생 / 일시정지">▶</button>
-    <button class="ib" data-act="bgm-next" title="다음 곡">⏭</button>
-    <button class="ib" data-act="bgm-fold" id="bgmFold" title="펼치기 / 접기">▴</button>
+    <button class="ib" data-act="bgm-play" id="bgmPlay" title="재생 / 일시정지"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg></button>
+    <button class="ib" data-act="bgm-next" title="다음 곡"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3v10l6.5-5zM8 3v10l6.5-5z" fill="currentColor"/></svg></button>
+    <button class="ib" data-act="bgm-fold" id="bgmFold" title="펼치기 / 접기"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 10.5l5-5 5 5z" fill="currentColor"/></svg></button>
   </div>
   <div class="bgm-tip" id="bgmTip">브라우저가 소리 자동 재생을 막았습니다 — 화면 아무 곳이나 한 번 누르면 소리가 켜집니다</div>
   <div class="bgm-b">
     <div class="ytbox"><div id="ytp"></div></div>
     <div class="bgm-c">
-      <button class="ib" data-act="bgm-prev" title="이전 곡">⏮</button>
-      <button class="ib" data-act="bgm-play" id="bgmPlay2" title="재생 / 일시정지">▶</button>
-      <button class="ib" data-act="bgm-next" title="다음 곡">⏭</button>
-      <button class="ib" data-act="bgm-shuffle" id="bgmShuf" title="무작위 재생">⤮</button>
+      <button class="ib" data-act="bgm-prev" title="이전 곡"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M14 3v10L7.5 8zM8 3v10L1.5 8z" fill="currentColor"/></svg></button>
+      <button class="ib" data-act="bgm-play" id="bgmPlay2" title="재생 / 일시정지"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg></button>
+      <button class="ib" data-act="bgm-next" title="다음 곡"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3v10l6.5-5zM8 3v10l6.5-5z" fill="currentColor"/></svg></button>
+      <button class="ib" data-act="bgm-shuffle" id="bgmShuf" title="무작위 재생"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h3l6 7h3M2 11.5h3l6-7h3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.5l2.5 2-2.5 2zM12 9.5l2.5 2-2.5 2z" fill="currentColor"/></svg></button>
       <button class="ib" data-act="bgm-auto" id="bgmAuto" title="열면 자동 재생">자</button>
       <span class="vol">음량</span><input type="range" id="bgmVol" min="0" max="100" value="40" aria-label="음량">
     </div>
@@ -122,6 +122,6 @@
 <input type="file" id="fileShot" accept="image/*" multiple hidden>
 <button class="totop" id="toTop" title="맨 위로" aria-label="맨 위로">▲<span>TOP</span></button>
 <div class="toast" id="toast"></div>
-<script src="app.js?v=0.9.3"></script>
+<script src="app.js?v=0.9.5"></script>
 </body>
 </html>

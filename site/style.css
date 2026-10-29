@@ -730,3 +730,29 @@ textarea.memo:focus,.memo1:focus{outline:none;border-color:var(--hi);box-shadow:
   dialog{width:calc(100vw - 16px);max-height:90vh;overflow:auto}
   .dlgbody{max-height:62vh}
 }
+
+/* v0.9.4 — 음악 버튼 아이콘 (SVG) */
+.ib .ico{width:13px;height:13px;display:block;pointer-events:none}
+.bgm-h .ib .ico{width:12px;height:12px}
+
+/* v0.9.5 — 휴대폰: 검색 창 확대 방지, TOP 20 탭 */
+.toptab{display:none}
+.tsec .tbadge{display:none}
+@media (max-width:640px){
+  /* 아이폰은 글자 16px 미만 입력칸을 누르면 화면을 확대함 → 16px */
+  input,select,textarea{font-size:16px!important}
+  dialog{width:calc(100vw - 20px);max-width:none;margin:auto;max-height:calc(100dvh - 24px);overflow:auto}
+  dialog .db{padding:14px 14px}
+  dialog .dh{padding:12px 14px}
+  dialog .rowf .btn{flex:0 0 auto;padding:8px 12px}
+  dialog .cands{max-height:46dvh;overflow:auto}
+  .hint2{font-size:12px;line-height:1.6}
+  /* TOP 20: 탭으로 하나씩 */
+  .toptab{display:block;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .toptab .seg{display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .toptab .seg button{padding:10px 4px;font-size:13px;font-weight:700}
+  .tops[data-tab=ml]>.tbp,.tops[data-tab=bp]>.tml{display:none}
+  .tops>div:first-child{border-bottom:0}
+  .tsec{background:rgba(var(--c),.12);border-bottom:1px solid var(--line);font-weight:700;font-size:15px}
+  .tsec::before{content:"▶";font-size:11px;color:var(--hi);margin-right:2px}
+}
