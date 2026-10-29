@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '0.9.2';
+const VERSION = '0.9.3';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -645,7 +645,7 @@ async function pageRank(){
       <span class="lbl">직업</span><select data-ch="rk-job"><option value="">전체</option>${jobs.map(([i, j]) => `<option value="${i}" ${String(i) === String(RK.job) ? 'selected' : ''}>${esc(j)}</option>`).join('')}</select>
       <span class="sp"></span><input class="q" data-in="rk-q" value="${esc(RK.q)}" placeholder="닉네임 · 길드 찾기"></div>`;
   if(mine.length) h += `<div class="ctrls"><span class="lbl">추적 캐릭터</span><div class="chips">${mine.map(([r, i]) => `<button class="chip" data-act="rk-goto" data-i="${i}">${esc(r[C.n])}<b>${i + 1}위</b></button>`).join('')}</div></div>`;
-  h += `<div class="tbl" style="margin:0;border:0"><table class="rk"><tr><th>순위</th><th class="l">캐릭터</th><th class="hide-s">직업</th><th>대표 마스터리</th><th>전투력</th><th>전문화</th><th class="hide-s">업적점수</th><th class="hide-s l">길드</th><th></th></tr>`;
+  h += `<div class="tbl" style="margin:0;border:0"><table class="rk rkm"><tr><th>순위</th><th class="l">캐릭터</th><th class="hide-s">직업</th><th>대표 마스터리</th><th>전투력</th><th>전문화</th><th class="hide-s">업적점수</th><th class="hide-s l">길드</th><th></th></tr>`;
   h += slice.map(([r, i]) => rankRow(r, i)).join('') || `<tr><td colspan="9" class="emptyrow">찾는 캐릭터가 없습니다</td></tr>`;
   h += '</table></div>';
   h += `<div class="pager"><button class="btn" data-act="rk-page" data-p="0" ${RK.page ? '' : 'disabled'}>처음</button><button class="btn" data-act="rk-page" data-p="${RK.page - 1}" ${RK.page ? '' : 'disabled'}>이전</button>
@@ -1263,6 +1263,8 @@ async function render(){
       st.again = false;
       const r = route();
       document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === r));
+      const na = document.querySelector('#nav a.on'), nv = $('#nav');   // 휴대폰: 선택한 메뉴가 보이도록 가로 스크롤
+      if(na && nv.scrollWidth > nv.clientWidth) nv.scrollTo({left: na.offsetLeft - (nv.clientWidth - na.offsetWidth) / 2, behavior: 'smooth'});
       renderStatus(); renderTicker();
       let html = '';
       try{
@@ -1284,13 +1286,13 @@ function renderStatus(){
     const c = L.crawl, pct = c.total ? c.done / c.total * 100 : 0;
     crawl = `<span>수집 중 <b>${nf(c.done)}/${nf(c.total)}</b><i class="prog"><b style="width:${pct.toFixed(1)}%"></b></i></span>`;
   }
-  $('#status').innerHTML = `<span>시스템 <b>정상</b><span class="blink">_</span></span>`
+  $('#status').innerHTML = `<span class="s-sys">시스템 <b>정상</b><span class="blink">_</span></span>`
     + `<span>데이터 기준일 <b>${esc(m?.date || '----')}</b></span>`
     + `<span>전체 캐릭터 <b>${m ? nf(m.worlds.reduce((a, w) => a + w.count, 0)) + '명' : '--'}</b></span>`
     + `<span>추적 <b>${ST.tracked.length}명</b></span>`
     + crawl
-    + `<span>자동 수집 <b>매일 ${pad2(AUTO_HOUR)}:${D.local ? '00' : '05'} · 05:00</b></span>`
-    + `<span>${D.local ? '내 PC' : '웹'} · 버전 <b>${VERSION}</b></span>`;
+    + `<span class="s-auto">자동 수집 <b>매일 ${pad2(AUTO_HOUR)}:${D.local ? '00' : '05'} · 05:00</b></span>`
+    + `<span class="s-ver">${D.local ? '내 PC' : '웹'} · 버전 <b>${VERSION}</b></span>`;
 }
 function renderTicker(){
   if(!$('#ticker')) return;
