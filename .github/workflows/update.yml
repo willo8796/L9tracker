@@ -1,5 +1,6 @@
 # 로드나인 추적기 — 매일 12:05(한국시간) 전체 캐릭터 수집 후 웹사이트 갱신
 # 사이트 갱신이 늦은 날을 대비해 12:35 · 13:05 · 14:05 에도 확인 (이미 수집했으면 바로 끝남)
+# 새벽 05:00 에도 한 번 더 확인 (전날 수집이 실패했으면 이때 다시 수집)
 name: 데이터 갱신
 
 on:
@@ -8,7 +9,7 @@ on:
     - cron: "35 3 * * *"      # 12:35 재확인
     - cron: "5 4 * * *"       # 13:05 재확인
     - cron: "5 5 * * *"       # 14:05 재확인
-    - cron: "5 20 * * *"      # 한국시간 새벽 05:05
+    - cron: "0 20 * * *"      # UTC 20:00 = 한국시간 새벽 05:00
   workflow_dispatch:           # Actions 화면에서 [Run workflow]로 바로 실행
     inputs:
       force:
@@ -17,7 +18,7 @@ on:
         default: false
   push:
     branches: [main]
-    paths: ["site/**"]         # 화면만 바뀌면 수집 없이 다시 배포
+    paths: ["site/**", "data/**"]   # 화면만 바뀌거나 data 폴더를 붙여넣으면 수집 없이 다시 배포
 
 permissions:
   contents: write
@@ -48,7 +49,7 @@ jobs:
           ARGS=""
           if [ "${{ github.event_name }}" = "push" ]; then ARGS="--no-crawl"; fi
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          python crawler.py --out public --site site --prev "${{ steps.pages.outputs.base_url }}/" $ARGS
+          python crawler.py --out public --site site --prev "${{ steps.pages.outputs.base_url }}/" --seed data $ARGS
           echo "status=$(cat public/.status)" >> "$GITHUB_OUTPUT"
       # 새로 수집한 데이터가 없으면(이미 최신 / 사이트 갱신 전) 배포하지 않음
       - if: steps.crawl.outputs.status == 'done' || steps.crawl.outputs.status == 'copied'
