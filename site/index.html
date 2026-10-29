@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko" data-phos="blue">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>로드나인 캐릭터 추적기</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/galmuri@2.40.3/dist/galmuri.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/vt323@5.2.7/index.css">
+<link rel="stylesheet" href="style.css?v=0.8.5">
+</head>
+<body>
+<div class="vign"></div>
+<div class="wrap boot">
+  <header class="fr">
+    <i class="nd tl"></i><i class="nd tr"></i><i class="nd bl"></i><i class="nd br"></i>
+    <div class="top">
+      <div class="id"><div class="logo">L9</div><div class="ttl">로드나인 캐릭터 추적기</div></div>
+      <div class="ctl">
+        <button class="btn pri" data-act="refresh" id="btnRefresh">갱신하기</button>
+        <button class="btn" data-act="add">검색</button>
+        <button class="btn" data-act="export">엑셀</button>
+        <div class="pal" id="pal">
+          <button class="btn" data-act="pal" id="btnPhos">색상 · 파랑</button>
+          <div class="palbox" id="palbox"></div>
+        </div>
+        <button class="btn" data-act="quit" id="btnQuit" hidden>종료</button>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <a href="#my" data-r="my">캐릭터</a>
+      <a href="#guild" data-r="guild">길드</a>
+      <a href="#rank" data-r="rank">랭킹</a>
+      <a href="#top" data-r="top">TOP 20</a>
+      <a href="#stats" data-r="stats">통계</a>
+      <a href="#exp" data-r="exp">경험치 계산기</a>
+      <a href="#fav" data-r="fav">즐겨찾기</a>
+      <a href="#track" data-r="track">추적</a>
+    </nav>
+    <div class="status" id="status"><span>불러오는 중<span class="blink">_</span></span></div>
+  </header>
+  <main id="main"></main>
+</div>
+
+<!-- 배경음악 -->
+<section class="bgm fr mini" id="bgm" aria-label="배경음악">
+  <div class="bgm-h">
+    <div class="eqz" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <span class="tt">배경음악</span>
+    <div class="song" id="bgmSong"><span>불러오는 중</span></div>
+    <button class="ib" data-act="bgm-play" id="bgmPlay" title="재생 / 일시정지">▶</button>
+    <button class="ib" data-act="bgm-next" title="다음 곡">⏭</button>
+    <button class="ib" data-act="bgm-fold" id="bgmFold" title="펼치기 / 접기">▴</button>
+  </div>
+  <div class="bgm-tip" id="bgmTip">브라우저가 소리 자동 재생을 막았습니다 — 화면 아무 곳이나 한 번 누르면 소리가 켜집니다</div>
+  <div class="bgm-b">
+    <div class="ytbox"><div id="ytp"></div></div>
+    <div class="bgm-c">
+      <button class="ib" data-act="bgm-prev" title="이전 곡">⏮</button>
+      <button class="ib" data-act="bgm-play" id="bgmPlay2" title="재생 / 일시정지">▶</button>
+      <button class="ib" data-act="bgm-next" title="다음 곡">⏭</button>
+      <button class="ib" data-act="bgm-shuffle" id="bgmShuf" title="무작위 재생">⤮</button>
+      <button class="ib" data-act="bgm-auto" id="bgmAuto" title="열면 자동 재생">자</button>
+      <span class="vol">음량</span><input type="range" id="bgmVol" min="0" max="100" value="40" aria-label="음량">
+    </div>
+    <div class="bgm-p"><input id="bgmList" placeholder="유튜브 재생목록 주소를 붙여넣기"><button class="btn" data-act="bgm-load">바꾸기</button></div>
+    <div class="bgm-msg" id="bgmMsg"></div>
+  </div>
+</section>
+
+<dialog id="dlgAdd"><form method="dialog">
+  <div class="dh">검색</div>
+  <div class="db">
+    <div class="seg stab" id="sTab"><button type="button" data-st="char" class="on">캐릭터</button><button type="button" data-st="guild">길드</button></div>
+    <p class="hint2" id="sHint"></p>
+    <div class="f"><label>월드</label><select id="addWorld"></select></div>
+    <div class="f"><label id="sLabel">캐릭터 명</label>
+      <div class="rowf"><input id="addName" autocomplete="off" placeholder="예: 스타일러"><button type="button" class="btn" id="btnFind">찾기</button></div></div>
+    <div class="cands" id="cands"></div>
+  </div>
+  <div class="df"><button class="btn" value="cancel" formnovalidate>닫기</button></div>
+</form></dialog>
+
+<dialog id="dlgM"><form method="dialog">
+  <div class="dh" id="mTitle">마스터리 입력</div>
+  <div class="db">
+    <p class="hint2">게임 마스터리 창에서 본 값을 입력하세요. 비워두면 기존 값을 유지합니다.</p>
+    <div class="f" style="max-width:220px"><label>입력 기준일</label><input type="date" id="mDate"></div>
+    <div class="mform" id="mForm"></div>
+    <div class="mform" style="margin-top:14px">
+      <div class="f"><label>통합 레벨</label><input id="mInteg" inputmode="numeric"></div>
+      <div class="f"><label>통합 %</label><input id="mPct" inputmode="decimal"></div>
+    </div>
+  </div>
+  <div class="df"><button class="btn" value="cancel">취소</button><button class="btn pri" type="button" id="btnMOk">저장</button></div>
+</form></dialog>
+
+<dialog id="dlgE"><form method="dialog">
+  <div class="dh">닉네임 / 월드 변경</div>
+  <div class="db">
+    <p class="hint2">닉네임 변경·월드 이전은 대부분 자동으로 따라갑니다. 못 찾을 때만 직접 바꾸세요.</p>
+    <div class="f"><label>월드</label><select id="eWorld"></select></div>
+    <div class="f"><label>닉네임</label><input id="eName"></div>
+  </div>
+  <div class="df"><button class="btn" value="cancel">취소</button><button class="btn pri" type="button" id="btnEOk">저장</button></div>
+</form></dialog>
+
+<dialog id="dlgR"><form method="dialog">
+  <div class="dh" id="rTitle">알림</div>
+  <div class="db"><div class="lines" id="rLines"></div></div>
+  <div class="df"><button class="btn pri" value="ok">확인</button></div>
+</form></dialog>
+
+<input type="file" id="fileBackup" accept=".json,application/json" hidden>
+<input type="file" id="fileShot" accept="image/*" multiple hidden>
+<button class="totop" id="toTop" title="맨 위로" aria-label="맨 위로">▲<span>TOP</span></button>
+<div class="toast" id="toast"></div>
+<script src="app.js?v=0.8.5"></script>
+</body>
+</html>
