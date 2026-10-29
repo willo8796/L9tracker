@@ -756,3 +756,14 @@ textarea.memo:focus,.memo1:focus{outline:none;border-color:var(--hi);box-shadow:
   .tsec{background:rgba(var(--c),.12);border-bottom:1px solid var(--line);font-weight:700;font-size:15px}
   .tsec::before{content:"▶";font-size:11px;color:var(--hi);margin-right:2px}
 }
+
+/* v0.9.6 — 한국어 줄바꿈: 글자 중간이 아니라 띄어쓰기 단위로, 줄 길이는 고르게 */
+body{word-break:keep-all;overflow-wrap:break-word}
+p,.note,.hint2,.alert,.blank p,.help li,.help p,.hdl dd,.bgm-tip,.bgm-msg,.empty,.emptyrow,.sub,.lines div,.toast{text-wrap:pretty}
+.blank h2,.blank p,.sec,.bar .sid,.kpi .lb,.hp-h,.dh{text-wrap:balance}
+.rk .nm,.cands button,.chip,.podi .pnm{word-break:break-all}
+@media (max-width:640px){
+  .blank{padding:60px 18px}
+  .blank p{line-height:1.7}
+  .note .btn,.note button{margin-top:4px}
+}

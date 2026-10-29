@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '0.9.5';
+const VERSION = '0.9.6';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -96,10 +96,12 @@ function serverLabel(s){ return s ? `${pad2(s)}서버` : ''; }
 
 /* ------------------------------------------------------------ 공통 화면 도구 */
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 3400); }
+// 줄바꿈 정리: ' · ' 구분점이 줄 맨 앞에 오지 않도록 앞 칸을 붙는 공백으로
+const NB = h => String(h).replace(/ · /g, '\u00a0· ');
 function showDlg(title, html, buttons, plain){
   $('#rTitle').innerHTML = title;
   $('#rLines').className = plain ? 'dlgbody' : 'lines';
-  $('#rLines').innerHTML = html;
+  $('#rLines').innerHTML = NB(html);
   const df = $('#dlgR .df');
   df.innerHTML = (buttons || []).map(b => `<button type="button" class="btn ${b.pri ? 'pri' : ''}" data-dlg="${esc(b.id)}">${esc(b.label)}</button>`).join('') + '<button class="btn" value="ok">닫기</button>';
   df.onclick = e => { const b = e.target.closest('[data-dlg]'); if(!b) return; const f = (buttons || []).find(x => x.id === b.dataset.dlg); $('#dlgR').close(); f && f.run(); };
@@ -1274,7 +1276,7 @@ async function render(){
       }catch(e){ html = blank('불러오기 오류', esc(e.message || e)); }
       const focus = document.activeElement?.dataset?.in;
       const pos = focus ? document.activeElement.selectionStart : 0;
-      $('#main').innerHTML = html;
+      $('#main').innerHTML = NB(html);
       if(focus){ const el = document.querySelector(`[data-in="${focus}"]`); if(el){ el.focus(); el.setSelectionRange(pos, pos); } }
     }while(st.again);
   })();
@@ -1377,9 +1379,9 @@ async function setSearchMode(m){
   $('#sTab').querySelectorAll('[data-st]').forEach(b => b.classList.toggle('on', b.dataset.st === m));
   $('#sLabel').textContent = m === 'guild' ? '길드명' : '캐릭터 명';
   $('#addName').placeholder = m === 'guild' ? '예: 별빛' : '예: 스타일러';
-  $('#sHint').innerHTML = m === 'guild'
+  $('#sHint').innerHTML = NB(m === 'guild'
     ? '길드명을 입력하고 [찾기] → 월드 · 서버 · 인원이 표시된 목록에서 길드를 누르면 [길드]에 정보가 표시됩니다.<br>' + critText() + '입니다.'
-    : critText().replace(' 기준', '') + ' 캐릭터만 검색됩니다.<br>' + '캐릭터 명 일부만 입력하고 [찾기] → 캐릭터를 누르면 [캐릭터]에 표시됩니다.';
+    : critText().replace(' 기준', '') + ' 캐릭터만 검색됩니다.<br>' + '캐릭터 명 일부만 입력하고 [찾기] → 캐릭터를 누르면 [캐릭터]에 표시됩니다.');
   $('#addWorld').closest('.f').hidden = m === 'guild';
   const prev = $('#addWorld').value;
   const ws = m === 'guild' ? [[0, '전체 월드']].concat(readyWorlds().map(w => [w.code, w.name])) : await addWorlds();
