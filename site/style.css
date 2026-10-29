@@ -618,3 +618,34 @@ textarea.memo:focus,.memo1:focus{outline:none;border-color:var(--hi);box-shadow:
 .ulog{columns:2;column-gap:36px}
 .ulog>div{break-inside:avoid}
 @media (max-width:860px){.bars.bars2{grid-template-columns:1fr;grid-auto-flow:row;grid-template-rows:none}.ulog{columns:1}}
+
+/* v0.9.0 — 변경 이력 · 사용 설명서 · 캐릭터 화면 초기화 */
+.recent .myreset{margin-left:auto;font-size:12px;padding:5px 12px}
+.ckb{display:inline-block;padding:2px 8px;font-size:12px;border:1px solid currentColor;white-space:nowrap;font-weight:700}
+.ckb.ck0{color:var(--amb)}.ckb.ck1{color:var(--up)}.ckb.ck2{color:#ff8ad8}.ckb.ck3{color:#8ae8ff}
+.chg .nh .old,.tl .nh .old{color:var(--dim);text-decoration:line-through;text-decoration-color:rgba(var(--c),.5)}
+.chg .nh .arrow,.tl .nh .arrow{margin:0 6px;color:var(--dim)}
+.chg .nh b,.tl .nh b{color:var(--hi)}
+.mvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:14px 16px}
+.mvcard{border:1px solid var(--line2);padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0;text-align:left}
+.mvh{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.mvh .nm{font-weight:700;font-size:15px;color:var(--hi)}
+.mvr{text-align:right}
+.tl{list-style:none;margin:0;padding:0 0 0 12px;border-left:1px solid var(--line2);display:flex;flex-direction:column;gap:7px}
+.tl li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;position:relative}
+.tl li::before{content:"";position:absolute;left:-16px;width:7px;height:7px;border-radius:50%;background:var(--hi);box-shadow:var(--glow)}
+.tl .dg{font-size:16px;color:var(--dim)}
+.mvf{display:flex;justify-content:flex-end;align-items:center;gap:6px}
+.helpwrap{display:flex;flex-direction:column;gap:14px}
+.help .hlpb{display:block;padding:14px 18px;line-height:1.75}
+.help p{margin:0 0 10px}
+.help ul{margin:6px 0 0;padding-left:20px}
+.help li{margin:3px 0}
+.help b{color:var(--hi)}
+.htbl{border-collapse:collapse;margin:8px 0 10px;min-width:min(100%,520px)}
+.htbl th,.htbl td{border:1px solid var(--line2);padding:7px 14px;text-align:left}
+.htbl th{color:var(--dim);font-weight:400;font-size:12px}
+.hdl{margin:0;display:grid;grid-template-columns:130px 1fr;gap:10px 16px}
+.hdl dt{color:var(--hi);font-weight:700}
+.hdl dd{margin:0}
+@media (max-width:640px){.hdl{grid-template-columns:1fr}.hdl dd{margin-bottom:8px}.mvgrid{grid-template-columns:1fr;padding:12px}}
