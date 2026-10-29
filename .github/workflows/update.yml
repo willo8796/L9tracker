@@ -1,0 +1,78 @@
+# 로드나인 추적기 — 매일 12:05(한국시간) 전체 캐릭터 수집 후 웹사이트 갱신
+# 사이트 갱신이 늦은 날을 대비해 12:35 · 13:05 · 14:05 에도 확인 (이미 수집했으면 바로 끝남)
+name: 데이터 갱신
+
+on:
+  schedule:
+    - cron: "5 3 * * *"       # UTC 03:05 = 한국시간 12:05
+    - cron: "35 3 * * *"      # 12:35 재확인
+    - cron: "5 4 * * *"       # 13:05 재확인
+    - cron: "5 5 * * *"       # 14:05 재확인
+    - cron: "5 20 * * *"      # 한국시간 새벽 05:05
+  workflow_dispatch:           # Actions 화면에서 [Run workflow]로 바로 실행
+    inputs:
+      force:
+        description: "이미 수집한 날이어도 다시 수집"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ["site/**"]         # 화면만 바뀌면 수집 없이 다시 배포
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    outputs:
+      status: ${{ steps.crawl.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: 수집
+        id: crawl
+        run: |
+          ARGS=""
+          if [ "${{ github.event_name }}" = "push" ]; then ARGS="--no-crawl"; fi
+          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          python crawler.py --out public --site site --prev "${{ steps.pages.outputs.base_url }}/" $ARGS
+          echo "status=$(cat public/.status)" >> "$GITHUB_OUTPUT"
+      # 새로 수집한 데이터가 없으면(이미 최신 / 사이트 갱신 전) 배포하지 않음
+      - if: steps.crawl.outputs.status == 'done' || steps.crawl.outputs.status == 'copied'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      # 60일 동안 저장소에 변화가 없으면 GitHub가 예약 실행을 멈추므로, 한 달에 한 번 기록을 남김
+      - name: 예약 실행 유지
+        if: github.event_name == 'schedule'
+        run: |
+          if [ "$(date -u +%d)" = "01" ] && [ "$(date -u +%H)" = "03" ]; then
+            date -u > .keepalive
+            git config user.name "l9tracker-bot"
+            git config user.email "l9tracker-bot@users.noreply.github.com"
+            git add .keepalive && git commit -m "keepalive" && git push || true
+          fi
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.status == 'done' || needs.build.outputs.status == 'copied'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
