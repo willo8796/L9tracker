@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '0.9.6';
+const VERSION = '0.9.7';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -515,6 +515,20 @@ function alignTrBar(){
   if(Math.abs(diff) > .5) tbl.style.setProperty('--delpad', Math.max(0, cur + diff) + 'px');
 }
 window.addEventListener('resize', () => alignTrBar());
+const TRF = Object.assign({q: '', g: '', w: 0, sort: 'add'}, JSON.parse(lsGet('l9trf', '{}') || '{}'));   // 추적 목록 찾기 · 필터
+function saveTRF(){ lsSet('l9trf', JSON.stringify(TRF)); }
+const TRVIEW = {keys: []};   // 지금 화면에 보이는 (필터 적용된) 추적 캐릭터
+function trGuild(c){ return c.r ? (c.r[C.g] || '') : (c.h?.g || ''); }
+function trFilter(cards){
+  const q = TRF.q.trim().toLowerCase();
+  let v = cards.filter(c => (!TRF.w || c.t.w === TRF.w)
+    && (!TRF.g || (TRF.g === '-' ? !trGuild(c) : trGuild(c) === TRF.g))
+    && (!q || c.t.n.toLowerCase().includes(q) || trGuild(c).toLowerCase().includes(q)));
+  const bp = c => (c.r ? c.r[C.bp] : c.last?.bp) || 0, ml = c => (c.r ? c.r[C.ml] : c.last?.ml) || 0, sp = c => (c.r ? c.r[C.sp] : c.last?.sp) || 0;
+  const by = {bp: (a, b) => bp(b) - bp(a), ml: (a, b) => ml(b) - ml(a) || bp(b) - bp(a), sp: (a, b) => sp(b) - sp(a),
+    name: (a, b) => a.t.n.localeCompare(b.t.n, 'ko'), guild: (a, b) => (trGuild(a) || '힣').localeCompare(trGuild(b) || '힣', 'ko') || bp(b) - bp(a)}[TRF.sort];
+  return by ? v.slice().sort(by) : v;
+}
 const TRCHK = new Set();   // 추적 목록에서 선택한 캐릭터
 async function pageTrack(){
   await followMoves().then(n => n.length && showLines('닉네임 변경 · 월드 이전을 따라갔습니다', n));
@@ -523,16 +537,28 @@ async function pageTrack(){
   let sel = CARDS.findIndex(c => c.k === TRSEL); if(sel < 0) sel = 0;
   const lastCh = c => c.ev.find(x => x.kind === '닉네임 변경' || x.kind === '길드 변경');
   for(const k of [...TRCHK]) if(!CARDS.some(c => c.k === k)) TRCHK.delete(k);
-  const allOn = CARDS.length && CARDS.every(c => TRCHK.has(c.k));
-  const list = `<section class="ov fr">${NODES}<div class="bar"><span class="sid g">추적 캐릭터 관리</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${CARDS.length}명 · 줄을 누르면 아래에 상세 표시</span></div>
+  const view = trFilter(CARDS); TRVIEW.keys = view.map(c => c.k);
+  const allOn = view.length && view.every(c => TRCHK.has(c.k));
+  const gm = new Map(); for(const c of CARDS){ const g = trGuild(c) || '-'; gm.set(g, (gm.get(g) || 0) + 1); }
+  const gl = [...gm].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko'));
+  if(TRF.g && !gm.has(TRF.g)) TRF.g = '';
+  const wl = [...new Set(CARDS.map(c => c.t.w))];
+  const filtered = view.length !== CARDS.length;
+  const list = `<section class="ov fr">${NODES}<div class="bar"><span class="sid g">추적 캐릭터 관리</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${filtered ? `${view.length} / ${CARDS.length}명` : `${CARDS.length}명`} · 줄을 누르면 아래에 상세 표시</span></div>
+    <div class="ctrls trf"><input class="q" data-in="tr-q" value="${esc(TRF.q)}" placeholder="캐릭터명 · 길드명 찾기">
+      <span class="lbl">길드</span><select data-ch="tr-g"><option value="">전체 (${CARDS.length})</option>${gl.map(([g, n]) => `<option value="${esc(g)}" ${g === TRF.g ? 'selected' : ''}>${g === '-' ? '길드 없음' : esc(g)} (${n})</option>`).join('')}</select>
+      ${wl.length > 1 ? `<span class="lbl">월드</span><select data-ch="tr-w"><option value="0">전체</option>${wl.map(w => `<option value="${w}" ${w === TRF.w ? 'selected' : ''}>${esc(wName(w))}</option>`).join('')}</select>` : ''}
+      <span class="lbl">정렬</span><select data-ch="tr-sort">${[['add', '추가한 순'], ['bp', '전투력'], ['ml', '대표 마스터리'], ['sp', '전문화'], ['name', '캐릭터명'], ['guild', '길드명']].map(([v, l]) => `<option value="${v}" ${v === TRF.sort ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      ${filtered || TRF.q || TRF.g || TRF.w ? '<button class="btn" data-act="tr-freset">필터 초기화</button>' : ''}</div>
     <div class="ctrls trbar"><span class="lbl">선택 <b class="hi">${TRCHK.size}</b> 명</span>
       <button class="btn" data-act="tr-delsel" ${TRCHK.size ? '' : 'disabled'}>선택 해제${TRCHK.size ? ` (${TRCHK.size}명)` : ''}</button>
       <button class="btn" data-act="tr-chknone" ${TRCHK.size ? '' : 'disabled'}>선택 취소</button>
       <span class="sp"></span>
       <button class="btn" data-act="tr-delall">모두 해제 (${CARDS.length}명)</button></div>
-    <div class="tbl" style="margin:0;border:0"><table class="rk trk"><tr><th class="chk"><button class="cb ${allOn ? 'on' : ''}" data-act="tr-chkall" title="모두 선택">${allOn ? '✓' : ''}</button></th><th>#</th><th class="l">캐릭터</th><th class="hide-s l">길드</th><th>대표 마스터리</th><th>전투력</th><th>전문화</th><th class="hide-s">직업</th><th class="l">최근 변경</th><th></th></tr>
-    ${CARDS.map((c, i) => { const r = c.r, lc = lastCh(c);
-      return `<tr class="rkrow ${i === sel ? 'mine' : ''} ${TRCHK.has(c.k) ? 'chk' : ''}" data-act="trsel" data-k="${esc(c.k)}"><td class="chk"><button class="cb ${TRCHK.has(c.k) ? 'on' : ''}" data-act="tr-chk" data-k="${esc(c.k)}" title="선택">${TRCHK.has(c.k) ? '✓' : ''}</button></td><td class="no">${i + 1}</td>
+    <div class="tbl" style="margin:0;border:0"><table class="rk trk"><tr><th class="chk"><button class="cb ${allOn ? 'on' : ''}" data-act="tr-chkall" title="${filtered ? '보이는 캐릭터 모두 선택' : '모두 선택'}">${allOn ? '✓' : ''}</button></th><th>#</th><th class="l">캐릭터</th><th class="hide-s l">길드</th><th>대표 마스터리</th><th>전투력</th><th>전문화</th><th class="hide-s">직업</th><th class="l">최근 변경</th><th></th></tr>
+    ${view.length ? '' : `<tr><td colspan="10" class="emptyrow">찾는 캐릭터가 없습니다 — 검색어나 길드 필터를 바꿔 보세요</td></tr>`}
+    ${view.map((c, i) => { const r = c.r, lc = lastCh(c);
+      return `<tr class="rkrow ${c === CARDS[sel] ? 'mine' : ''} ${TRCHK.has(c.k) ? 'chk' : ''}" data-act="trsel" data-k="${esc(c.k)}"><td class="chk"><button class="cb ${TRCHK.has(c.k) ? 'on' : ''}" data-act="tr-chk" data-k="${esc(c.k)}" title="선택">${TRCHK.has(c.k) ? '✓' : ''}</button></td><td class="no">${i + 1}</td>
         <td class="l"><div class="nm">${esc(c.t.n)}</div><div class="sub">${esc(wName(c.t.w))} ${r ? serverLabel(r[C.s]) : ''}</div></td>
         <td class="hide-s l">${esc(r ? (r[C.g] || '-') : '--')}</td>
         <td>${r ? `<span class="big" style="font-size:19px">${nf(r[C.ml])}</span><div class="sub">${esc(mname(mcode(r[C.mc])))}</div>` : '--'}</td>
@@ -930,7 +956,7 @@ function pageHelp(){
       <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다.</dd>
       <dt>경험치 계산기</dt><dd>사냥 결과 창 캡처를 끌어다 놓거나 Ctrl+V로 붙여넣으면 사냥터 · 사냥 시간 · M 경험치를 읽어 1분당 · 1시간당 경험치를 기록하고, 가장 효율 좋은 사냥터를 ★로 표시합니다. 사냥터 이름 앞뒤에 잘못 읽힌 글자는 자동으로 떼어냅니다. 잘못 읽은 기록은 [수정]으로 고칠 수 있습니다.</dd>
       <dt>즐겨찾기</dt><dd>☆로 즐겨찾기한 캐릭터의 현재 정보와 메모.</dd>
-      <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
+      <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
     </dl>`)
   + sec('알아둘 점', `
     <ul><li>추적 · 즐겨찾기 · 메모 · 마스터리 입력 · 경험치 기록은 <b>이 브라우저에만</b> 저장됩니다. 다른 기기로 옮기려면 [캐릭터] · [추적] 아래 [백업 저장] / [백업 불러오기]를 쓰세요.</li>
@@ -1604,7 +1630,8 @@ document.addEventListener('click', async ev => {
     else if(act === 'guildgo'){ ev.preventDefault(); if($('#dlgR').open) $('#dlgR').close(); GS.q = b.dataset.g; openGuild(gkey(b.dataset.w, b.dataset.s, b.dataset.g)); }
     else if(act === 'setcur'){ setCur(b.dataset.w, b.dataset.n); await render(); window.scrollTo({top: 0}); }
     else if(act === 'tr-chk'){ TRCHK.has(k) ? TRCHK.delete(k) : TRCHK.add(k); render(); }
-    else if(act === 'tr-chkall'){ const all = ST.tracked.map(t => key(t.w, t.n)); if(all.every(x => TRCHK.has(x))) TRCHK.clear(); else all.forEach(x => TRCHK.add(x)); render(); }
+    else if(act === 'tr-freset'){ Object.assign(TRF, {q: '', g: '', w: 0}); saveTRF(); render(); }
+    else if(act === 'tr-chkall'){ const all = TRVIEW.keys.length ? TRVIEW.keys : ST.tracked.map(t => key(t.w, t.n)); if(all.every(x => TRCHK.has(x))) TRCHK.clear(); else all.forEach(x => TRCHK.add(x)); render(); }
     else if(act === 'tr-chknone'){ TRCHK.clear(); render(); }
     else if(act === 'tr-delsel' || act === 'tr-delall'){
       const keys = act === 'tr-delall' ? ST.tracked.map(t => key(t.w, t.n)) : [...TRCHK];
@@ -1656,10 +1683,14 @@ document.addEventListener('change', e => {
   if(t === 'sc-w'){ SC.w = Number(e.target.value); SC.s = 0; saveSC(); RK.page = 0; render(); }
   else if(t === 'sc-s'){ SC.s = Number(e.target.value); saveSC(); RK.page = 0; render(); }
   else if(t === 'rk-job'){ RK.job = e.target.value; RK.page = 0; render(); }
+  else if(t === 'tr-g'){ TRF.g = e.target.value; saveTRF(); render(); }
+  else if(t === 'tr-w'){ TRF.w = Number(e.target.value); saveTRF(); render(); }
+  else if(t === 'tr-sort'){ TRF.sort = e.target.value; saveTRF(); render(); }
   else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.page = 0; CG.mv = 24; saveCG(); render(); }
 });
 let QT = null;
 document.addEventListener('input', e => {
+  if(e.target.dataset?.in === 'tr-q'){ TRF.q = e.target.value; saveTRF(); clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.dataset?.in === 'cg-q'){ CG.q = e.target.value; CG.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.dataset?.in === 'rk-q'){ RK.q = e.target.value; RK.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   const mk = e.target.dataset?.memo;
