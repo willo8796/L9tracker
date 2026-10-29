@@ -2,8 +2,11 @@
 """
 로드나인 전체 캐릭터 수집기 (랭킹 · 통계 · 추적용 데이터 생성)
 
-공식 캐릭터 정보(l9.onstove.com)에서 검색 가능한 캐릭터(서버별 전투력 1,000위 안)를
-월드별로 모두 조회해 웹 화면이 읽는 JSON 파일을 만든다.
+공식 캐릭터 정보(l9.onstove.com)에서 검색 가능한 캐릭터(서버별 전투력 1,000위 안) 중
+수집 기준(WORLD_RULES)에 맞는 캐릭터를 월드별로 조회해 웹 화면이 읽는 JSON 파일을 만든다.
+  구월드(울란·디엔·린드리스): 전투력 14만 이상 / 신월드(가르바나·디나페리·하칸): 서버별 전투력 상위 500위
+  사이트 목록은 전투력 순이 아니라 이름 순이라, 전날 값으로 조회할 캐릭터를 미리 고르고
+  기준 밖 캐릭터는 skip/<월드>.json 에 적어 두었다가 7일에 한 번씩 다시 확인한다.
 
   python crawler.py --out public                 # 수집 + 파일 생성
   python crawler.py --out public --prev URL/폴더  # 이전 기록(히스토리)을 이어받아 생성
@@ -14,6 +17,8 @@
   chars/<월드>.json    월드별 전체 캐릭터 최신 값
   hist/<00~63>.json    캐릭터별 최근 일별 기록과 변경 내역(닉네임·길드·월드·서버)
   moves.json           최근 닉네임 변경 · 월드 이전 연결표
+  changes.json         변경 이력 (닉네임·길드·월드·서버) + 월드/서버 이전 캐릭터 추적
+  skip/<월드>.json     수집 기준 밖 캐릭터의 마지막 전투력 (조회 대상 고르기용)
 """
 import os
 import sys
@@ -54,6 +59,25 @@ MASTERIES = [
     ("Mastery_Bow", "활"), ("Mastery_CrossBow", "석궁"),
 ]
 # 월드별 캐릭터 파일 열 순서 (화면 app.js 와 같아야 함)
+# 월드별 수집 기준: ("bp", 최소 전투력) 또는 ("top", 서버별 상위 N위). 목록에 없는 월드는 전부 수집.
+WORLD_RULES = {"울란": ("bp", 140000), "디엔": ("bp", 140000), "린드리스": ("bp", 140000),
+               "가르바나": ("top", 500), "디나페리": ("top", 500), "하칸": ("top", 500)}
+RULE_MARGIN = 0.97        # 기준보다 3% 낮은 캐릭터까지 매일 조회 (기준을 막 넘는 캐릭터를 놓치지 않도록)
+RECHECK_DAYS = 7          # 기준 밖 캐릭터는 7일에 한 번 다시 조회
+CHANGE_DAYS = 45          # 변경 이력 보관 일수
+CHANGE_MAX = 20000
+
+
+def rule_of(wname):
+    return WORLD_RULES.get(wname)
+
+
+def rule_text(r):
+    if not r:
+        return "서버별 전투력 1,000위"
+    return f"전투력 {r[1] // 10000}만 이상" if r[0] == "bp" else f"서버별 전투력 상위 {r[1]}위"
+
+
 COLS = ["n", "s", "j", "mc", "ml", "mr", "bp", "bwr", "bsr", "ach", "sp", "g", "m1c", "m1l", "m2c", "m2l"]
 
 
@@ -266,6 +290,8 @@ class Builder:
                 self.mcodes.append(c)
         self.cur = {}
         self.wmeta = {}
+        self.skip = {}
+        self.alive = {}          # 월드별 오늘 사이트 목록에 있는 이름 (기준 밖이라 안 모은 캐릭터를 '사라짐'으로 보지 않도록)
 
     def jidx(self, j):
         j = j or "-"
@@ -299,8 +325,13 @@ class Builder:
                 r[8] = srank[r[1]]
         _dump(os.path.join(self.data, "chars", f"{wc}.json"),
               {"world": wc, "date": self.dd.isoformat(), "cols": COLS, "rows": out_rows})
+        r = rule_of(wn)
         self.wmeta[wc] = {"code": wc, "name": wn, "count": len(out_rows), "servers": sorted(servers),
-                          "ready": True, "date": self.dd.isoformat()}
+                          "ready": True, "date": self.dd.isoformat(), "rule": list(r) if r else None,
+                          "group": ("구월드" if r and r[0] == "bp" else "신월드" if r else "")}
+        if wc in self.skip:
+            os.makedirs(os.path.join(self.data, "skip"), exist_ok=True)
+            _dump(os.path.join(self.data, "skip", f"{wc}.json"), self.skip[wc])
 
     def worlds_meta(self):
         old = {w["code"]: w for w in self.old.get("worlds") or []}
@@ -340,7 +371,8 @@ class Builder:
 
         # 사라진 캐릭터 → 새로 나타난 캐릭터 연결 (닉네임 변경 · 월드 이전). 이번에 수집한 월드만 대상.
         gone = [k for k, h in hist.items() if k not in cur and int(k.split("|", 1)[0]) in done_w
-                and h["p"] and h["p"][-1][0] >= today - 3]
+                and h["p"] and h["p"][-1][0] >= today - 3
+                and k.split("|", 1)[1] not in self.alive.get(int(k.split("|", 1)[0]), ())]
         new = [k for k in cur if k not in hist]
         pairs = []
         if gone and new:
@@ -410,6 +442,7 @@ class Builder:
                 del hist[k]
         moves = [m for m in moves if m["d"] > today - MOVE_DAYS]
         _dump(os.path.join(self.data, "gevents.json"), build_gevents(hist, cur, self.mcodes, today))
+        _dump(os.path.join(self.data, "changes.json"), build_changes(hist, cur, self.mcodes, today, wname))
         shards = [dict() for _ in range(SHARDS)]
         for k, h in hist.items():
             shards[shard_of(k)][k] = h
@@ -433,7 +466,7 @@ GEVENT_DAYS = HIST_DAYS
 
 def build_gevents(hist, cur, mcodes, today):
     """길드 가입·탈퇴 기록 (최근 GEVENT_DAYS일): 캐릭터별 '길드 변경' 기록을 모아 길드 화면에서 바로 쓰도록 정리.
-    서버 전투력 1,000위 안에서 이틀 연속 보인 캐릭터끼리 비교한 것 — 순위 밖으로 밀려난 경우는 포함되지 않음."""
+    수집 기준 안에서 이틀 연속 보인 캐릭터끼리 비교한 것 — 순위 밖으로 밀려난 경우는 포함되지 않음."""
     out = []
     cut = today - GEVENT_DAYS
     for k, h in hist.items():
@@ -453,6 +486,87 @@ def build_gevents(hist, cur, mcodes, today):
                         "bp": bp, "ml": ml, "mc": mc, "names": names, "seen": bool(c)})
     out.sort(key=lambda x: -x["d"])
     return out
+
+
+def select_names(names, rule, prev_rows, skip, today, force=False):
+    """조회할 이름 고르기. prev_rows: 전날 chars 행, skip: {이름: [전투력, 서버, 확인일]}"""
+    if not rule or force or (not prev_rows and not skip):
+        return list(names)
+    known = {}
+    for n, v in (skip or {}).items():
+        known[n] = (v[0] or 0, v[1] or 0, v[2] or 0)
+    for r in prev_rows or []:
+        known[r[0]] = (r[6] or 0, r[1] or 0, today - 1)
+    cut = {}
+    if rule[0] == "top":
+        by_s = {}
+        for bp, sv, _ in known.values():
+            by_s.setdefault(sv, []).append(bp)
+        for sv, l in by_s.items():
+            l.sort(reverse=True)
+            cut[sv] = l[rule[1] - 1] if len(l) >= rule[1] else 0
+    out = []
+    for n in names:
+        k = known.get(n)
+        if k is None:
+            out.append(n); continue
+        bp, sv, day = k
+        line = rule[1] if rule[0] == "bp" else cut.get(sv, 0)
+        if bp >= line * RULE_MARGIN or today - day >= RECHECK_DAYS or zlib.crc32(n.encode("utf-8")) % RECHECK_DAYS == today % RECHECK_DAYS:
+            out.append(n)
+    return out
+
+
+def apply_rule(raws, rule):
+    """조회 결과 → (저장할 결과, 기준 밖 결과)"""
+    if not rule:
+        return raws, []
+    bp = lambda v: to_int(v.get("battle_power_point")) or 0
+    if rule[0] == "bp":
+        keep = [v for v in raws if bp(v) >= rule[1]]
+    else:
+        by_s = {}
+        for v in raws:
+            by_s.setdefault(to_int(v.get("server_code")) or 0, []).append(v)
+        keep = []
+        for l in by_s.values():
+            l.sort(key=lambda v: -bp(v))
+            keep += l[:rule[1]]
+    ids = set(map(id, keep))
+    return keep, [v for v in raws if id(v) not in ids]
+
+
+CHANGE_KINDS = ["닉네임 변경", "길드 변경", "월드 이전", "서버 변경"]
+
+
+def build_changes(hist, cur, mcodes, today, wname):
+    """변경 이력: 최근 CHANGE_DAYS일 닉네임·길드·월드·서버 변경 목록 + 월드/서버 이전 캐릭터별 전체 변경 내역.
+    list 한 줄 = [날짜, 종류번호, 월드, 서버, 현재 닉네임, 이전, 이후, 현재 길드, 전투력, 대표 마스터리 레벨, 대표 무기, 현재 수집 대상인지]"""
+    cut = today - CHANGE_DAYS
+    lst, moved = [], []
+    for k, h in hist.items():
+        ev = [e for e in h.get("e", []) if e[1] in CHANGE_KINDS]
+        if not ev:
+            continue
+        w, n = k.split("|", 1)
+        c = cur.get(k)
+        lp = h["p"][-1] if h.get("p") else None
+        bp = c["bp"] if c else (lp[1] if lp else None)
+        ml = c["ml"] if c else (lp[3] if lp else None)
+        mi = c["mc"] if c else (lp[6] if lp else -1)
+        mc = mcodes[mi] if isinstance(mi, int) and 0 <= mi < len(mcodes) else None
+        g = (c["g"] if c else h.get("g")) or ""
+        s = (c["s"] if c else h.get("s")) or 0
+        for e in ev:
+            if e[0] > cut:
+                lst.append([e[0], CHANGE_KINDS.index(e[1]), int(w), s, n, e[2] or "", e[3] or "", g, bp, ml, mc, 1 if c else 0])
+        if any(e[1] in ("월드 이전", "서버 변경") for e in ev):
+            moved.append({"w": int(w), "s": s, "n": n, "g": g, "bp": bp, "ml": ml, "mc": mc, "seen": bool(c),
+                          "e": [[e[0], CHANGE_KINDS.index(e[1]), e[2] or "", e[3] or ""] for e in ev],
+                          "last": max(e[0] for e in ev if e[1] in ("월드 이전", "서버 변경"))})
+    lst.sort(key=lambda x: (-x[0], x[1]))
+    moved.sort(key=lambda x: -x["last"])
+    return {"date": today, "days": CHANGE_DAYS, "kinds": CHANGE_KINDS, "list": lst[:CHANGE_MAX], "moved": moved[:3000]}
 
 
 def crawl_world(fetch, wc, names, workers, tick):
@@ -539,7 +653,8 @@ def copy_prev(out, prev, log=print):
     data = os.path.join(out, "data")
     os.makedirs(os.path.join(data, "chars"), exist_ok=True)
     os.makedirs(os.path.join(data, "hist"), exist_ok=True)
-    files_extra = ["data/gevents.json"]
+    os.makedirs(os.path.join(data, "skip"), exist_ok=True)
+    files_extra = ["data/gevents.json", "data/changes.json"] + [f"data/skip/{w['code']}.json" for w in meta.get("worlds", []) if w.get("rule")]
     files = ["data/meta.json", "data/moves.json"] + files_extra + [f"data/chars/{w['code']}.json" for w in meta.get("worlds", [])] \
         + [f"data/hist/{i:02d}.json" for i in range(meta.get("shards", SHARDS))]
     for rel in files:
@@ -587,11 +702,41 @@ def fresh_check(fetch, prev, old, log=print, n=30):
     return True
 
 
+def _newer(a, b):
+    """meta a 가 b 보다 새 데이터인지 (기준일 → 완성 여부 → 생성 시각)"""
+    if not a:
+        return False
+    if not b:
+        return True
+    ka = (a.get("date") or "", 0 if a.get("partial") else 1, a.get("generated") or "")
+    kb = (b.get("date") or "", 0 if b.get("partial") else 1, b.get("generated") or "")
+    return ka > kb
+
+
+def find_seed(seed):
+    """붙여넣은 data 폴더 찾기: seed, seed/web (내 PC 프로그램의 data 폴더째), 현재 폴더 순서로 data/meta.json 이 있는 곳"""
+    cands = []
+    for s in ([seed] if seed else []):
+        cands += [s, os.path.join(s, "web"), os.path.dirname(os.path.abspath(s))]
+    for c in cands:
+        if c and os.path.exists(os.path.join(c, "data", "meta.json")):
+            return c
+    return None
+
+
 def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_crawl=False,
-        site_dir=None, progress=None, log=print, session=None, now=None, first_worlds=None):
-    """반환: (상태, meta)  상태 = done | skip | stale | refreshing | copied | error"""
+        site_dir=None, progress=None, log=print, session=None, now=None, first_worlds=None, seed=None):
+    """반환: (상태, meta)  상태 = done | skip | stale | refreshing | copied | error
+    seed: 붙여넣은 data 폴더 — 이전 데이터보다 새것이면 그 데이터를 이어받아 바로 씀"""
     say = progress or (lambda *_: None)
     prev = Prev(prev_src)
+    used_seed = False
+    sd = find_seed(seed)
+    if sd and os.path.abspath(sd) != os.path.abspath(out):
+        sm = Prev(sd).read("data/meta.json")
+        if _newer(sm, prev.read("data/meta.json")):
+            log(f"붙여넣은 데이터를 사용합니다: {sd} (기준일 {sm.get('date')})")
+            prev_src, prev, used_seed = sd, Prev(sd), True
     same = os.path.abspath(prev_src or "") == os.path.abspath(out)
     if site_dir:
         copy_site(site_dir, out)
@@ -602,19 +747,19 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
         log("지금은 사이트 데이터 갱신 시간(10~12시)입니다.")
         if not same:
             copy_prev(out, prev, log)
-        return "refreshing", None
+        return ("copied" if used_seed else "refreshing"), None
     dd = dd or (now or now_kst()).date() - timedelta(days=1)
     old = prev.read("data/meta.json")
     if old and old.get("date") == dd.isoformat() and not old.get("partial") and not force:
         log(f"이미 {dd} 기준 데이터가 있습니다.")
         if not same:
             copy_prev(out, prev, log)
-        return "skip", old
+        return ("copied" if used_seed else "skip"), old
     fetch = Fetcher(rate=rate, session=session, log=log)
     if old and not force and not fresh_check(fetch, prev, old, log):
         if not same:
             copy_prev(out, prev, log)
-        return "stale", old
+        return ("copied" if used_seed else "stale"), old
     if not same and old:
         copy_prev(out, prev, log)      # 수집이 끝나지 않은 월드는 전날 데이터로 보이도록
     t0 = time.time()
@@ -630,8 +775,21 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
             log(f"{wn} 목록 오류: {e}")
             names[wc] = []
         say("names", wn, len(names[wc]))
+    today = dnum(dd)
+    plan, skips, prows = {}, {}, {}
+    for wc, wn in worlds:
+        rule = rule_of(wn)
+        pj = prev.read(f"data/chars/{wc}.json") if old else None
+        prows[wc] = (pj or {}).get("rows") or []
+        sk = (prev.read(f"data/skip/{wc}.json") or {}) if old else {}
+        nameset = set(names[wc])
+        skips[wc] = {n: v for n, v in sk.items() if n in nameset}
+        plan[wc] = select_names(names[wc], rule, prows[wc], skips[wc], today, force)
+        if rule:
+            log(f"{wn}: 수집 기준 {rule_text(rule)} — 목록 {len(names[wc]):,}명 중 {len(plan[wc]):,}명 조회")
+    B.alive = {wc: set(v) for wc, v in names.items()}
     B.write_partial()
-    total = sum(len(v) for v in names.values())
+    total = sum(len(v) for v in plan.values())
     st = {"done": 0}
     lock = threading.Lock()
 
@@ -643,14 +801,30 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
 
     fail = 0
     for wc, wn in worlds:
-        if not names[wc]:
+        if not plan[wc]:
             continue
-        rows, f = crawl_world(fetch, wc, names[wc], workers, tick)
+        rows, f = crawl_world(fetch, wc, plan[wc], workers, tick)
         fail += f
-        if len(rows) < len(names[wc]) * 0.5:
-            log(f"{wn}: 조회 실패가 많아 저장하지 않습니다 ({len(rows)}/{len(names[wc])})")
+        if len(rows) < len(plan[wc]) * 0.5:
+            log(f"{wn}: 조회 실패가 많아 저장하지 않습니다 ({len(rows)}/{len(plan[wc])})")
             continue
-        B.add_world(wc, wn, rows)
+        rule = rule_of(wn)
+        keep, out_rule = apply_rule(rows, rule)
+        if rule:
+            sk = dict(skips[wc])
+            got = set()
+            for v in rows:
+                got.add(v.get("_q")); got.add(v.get("character_name"))
+            for r in prows[wc]:          # 이번에 조회하지 않은 전날 캐릭터는 전날 값으로 남김
+                if r[0] not in got:
+                    sk.setdefault(r[0], [r[6] or 0, r[1] or 0, today - 1])
+            for v in keep:
+                sk.pop(v.get("_q"), None); sk.pop(v.get("character_name"), None)
+            for v in out_rule:
+                sk[v.get("character_name") or v.get("_q")] = [to_int(v.get("battle_power_point")) or 0, to_int(v.get("server_code")) or 0, today]
+            nameset = set(names[wc])
+            B.skip[wc] = {n: x for n, x in sk.items() if n in nameset}
+        B.add_world(wc, wn, keep)
         B.write_partial()
         say("world", wn, len(B.wmeta), len(worlds))
         log(f"{wn} 완료 ({len(rows):,}명) — {len(B.wmeta)}/{len(worlds)} 월드")
@@ -672,6 +846,7 @@ def main():
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--force", action="store_true", help="갱신 시간·중복 여부와 관계없이 수집")
     ap.add_argument("--no-crawl", action="store_true", help="수집 없이 이전 데이터만 복사")
+    ap.add_argument("--seed", default="", help="붙여넣은 data 폴더 (이전 데이터보다 새것이면 사용)")
     a = ap.parse_args()
 
     def progress(kind, *x):
@@ -683,7 +858,7 @@ def main():
             print(f"[{now_kst():%H:%M:%S}] 조회 {x[0]:,}/{x[1]:,}", flush=True)
 
     st, _ = run(a.out, a.prev, mode="자동", rate=a.rate, workers=a.workers, force=a.force,
-                no_crawl=a.no_crawl, site_dir=a.site or None, progress=progress)
+                no_crawl=a.no_crawl, site_dir=a.site or None, progress=progress, seed=a.seed or None)
     print("결과:", st)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, ".status"), "w") as f:   # GitHub Actions: 새 데이터가 없으면 배포 건너뜀
