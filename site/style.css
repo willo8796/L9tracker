@@ -780,3 +780,24 @@ p,.note,.hint2,.alert,.blank p,.help li,.help p,.hdl dd,.bgm-tip,.bgm-msg,.empty
   .trf select{width:100%}
   .trf .btn{grid-column:span 2}
 }
+
+/* v0.9.8 — 확실 / 유력 */
+.cfb{display:inline-block;margin-left:5px;padding:1px 6px;font-size:11px;font-weight:700;border:1px solid currentColor;white-space:nowrap;vertical-align:middle}
+.cfb.c1{color:var(--up)}
+.cfb.c2{color:var(--amb);background:rgba(255,210,122,.1);border-style:dashed}
+.note .cfb{margin-left:0}
+.mvcard.lk2{border-style:dashed;border-color:rgba(255,210,122,.6)}
+.mvlv{font-size:12px}
+.mvlv .cfb{margin-left:0}
+.likely{margin:0 16px 12px;padding:10px 12px;border:1px dashed rgba(255,210,122,.7);background:rgba(255,210,122,.06);font-size:12.5px;line-height:1.6}
+.likely .cfb{margin:0 4px 0 0}
+.likely .lk{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,210,122,.25)}
+.likely .lk b{color:var(--hi)}
+@media (max-width:640px){.likely{margin:0 12px 10px}.chg td .cfb{display:block;margin:4px 0 0;width:max-content}}
+@media (max-width:640px){
+  .chg td.nh{white-space:normal;min-width:118px;font-size:11.5px;line-height:1.45}
+  .chg td.nh .old,.chg td.nh b{display:block}
+  .chg td.nh .arrow{display:none}
+  .chg td.nh b::before{content:"→ ";color:var(--dim);font-weight:400}
+  .chg td:first-child{font-size:14px!important;padding-left:8px}
+}

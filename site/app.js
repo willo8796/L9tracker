@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '0.9.7';
+const VERSION = '0.9.8';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -252,7 +252,7 @@ async function followMoves(){
     if(!j || j.byName.has(t.n) || D.quick?.rows?.[key(t.w, t.n)]) continue;
     let w = t.w, n = t.n, hops = 0, found = null;
     while(hops++ < 5){
-      const m = mv.filter(x => x.from[0] === w && x.from[1] === n).pop();
+      const m = mv.filter(x => x.from[0] === w && x.from[1] === n && (!x.lv || x.lv === '확실')).pop();
       if(!m) break;
       [w, n] = m.to; found = m;
     }
@@ -269,6 +269,20 @@ async function followMoves(){
   }
   saveStore(); saveSession();
   return notes;
+}
+// 유력 후보로 직접 바꾸기 (추적 · 즐겨찾기 · 메모 · 입력한 마스터리를 새 캐릭터로 옮김)
+function applyMove(ow, on, w, n){
+  ow = Number(ow); w = Number(w);
+  const ok = key(ow, on), nk = key(w, n);
+  const t = ST.tracked.find(x => x.w === ow && x.n === on);
+  if(t && ST.tracked.some(x => key(x.w, x.n) === nk)) ST.tracked = ST.tracked.filter(x => x !== t);
+  else if(t){ t.w = w; t.n = n; }
+  if(ST.mastery[ok] && !ST.mastery[nk]){ ST.mastery[nk] = ST.mastery[ok]; delete ST.mastery[ok]; }
+  if(ST.integ[ok] && !ST.integ[nk]){ ST.integ[nk] = ST.integ[ok]; delete ST.integ[ok]; }
+  const f = favOf(ow, on); if(f && !favOf(w, n)){ f.w = w; f.n = n; }
+  if(ST.cur && ST.cur.w === ow && ST.cur.n === on){ ST.cur = {w, n}; }
+  if(TRSEL === ok){ TRSEL = nk; lsSet('l9trsel', nk); }
+  saveStore(); saveSession();
 }
 async function buildCards(list){
   const out = [];
@@ -581,6 +595,17 @@ async function fillMissCands(){
       if((nm === n && r[C.w] !== Number(w)) || (nm.startsWith(n) && /^\d+$/.test(nm.slice(n.length)))) c.push(`${wName(r[C.w])} ${nm}`); }
     el.querySelector('.cands-msg').textContent = c.length ? ' · 후보: ' + c.slice(0, 5).join(', ') + ' — [닉네임/월드]로 바꿀 수 있습니다' : '';
   });
+  const mv = await moves();
+  els.forEach(el => {
+    const [w, n] = el.dataset.miss.split('|');
+    const l = mv.filter(m => m.lv === '유력' && m.from[0] === Number(w) && m.from[1] === n).slice(-3);
+    if(!l.length) return;
+    const box = document.createElement('div'); box.className = 'likely';
+    box.innerHTML = NB(`<b class="cfb c2">유력</b> 월드 · 서버 이전 또는 닉네임 변경으로 보이는 캐릭터가 있습니다 (단정할 수 없어 자동으로 옮기지 않았습니다)`
+      + l.map(m => `<div class="lk"><span><b>${esc(m.to[1])}</b> ${esc(wName(m.to[0]))} ${m.ts?.[0] ? serverLabel(m.ts[0]) : ''} · ${esc(m.ts?.[1] || '길드 없음')} · 일치도 ${m.score}%${m.n > 1 ? ` · 후보 ${m.n}명` : ''} · ${esc(dayStr(m.d).slice(5))}</span>
+        <button class="mini-btn" data-act="mv-apply" data-ow="${w}" data-on="${esc(n)}" data-w="${m.to[0]}" data-n="${esc(m.to[1])}">이 캐릭터로 바꾸기</button></div>`).join(''));
+    el.after(box);
+  });
 }
 
 /* 마스터리 칸 바로 입력 */
@@ -855,8 +880,9 @@ async function pageGuild(){
 }
 
 /* ============================================================ 변경 이력 */
-const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, q: '', page: 0, mv: 24}, x || {}, {page: 0, mv: 24}); })();
-function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, q: CG.q})); }catch(e){} }
+const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, q: '', page: 0, mv: 24, cf: 0}, x || {}, {page: 0, mv: 24}); })();
+function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, q: CG.q, cf: CG.cf})); }catch(e){} }
+function cfBadge(c, n, sc){ return c === 1 ? '<span class="cfb c1" title="이 캐릭터로 확실히 이어 붙였습니다">확실</span>' : c === 2 ? `<span class="cfb c2" title="비슷한 캐릭터 — 확실하지 않아 이어 붙이지 않았습니다">유력${n > 1 ? ` · 후보 ${n}명` : ''}</span>` : ''; }
 const CK = ['닉네임 변경', '길드 변경', '월드 이전', '서버 이전'];
 async function changes(){ if(!D.chg) D.chg = getJSON('data/changes.json').catch(() => null); return D.chg; }
 function ckBadge(k){ return `<span class="ckb ck${k}">${CK[k]}</span>`; }
@@ -880,8 +906,8 @@ async function pageChg(){
   const inP = d => per >= 999 || d > today - per;
   const q = CG.q.trim();
   const base = ch.list.filter(x => inP(x[0]) && (!CG.w || x[2] === CG.w));
-  const cnt = [0, 0, 0, 0]; for(const x of base) cnt[x[1]]++;
-  let view = base.filter(x => CG.kind < 0 || x[1] === CG.kind);
+  const cnt = [0, 0, 0, 0]; let lk = 0; for(const x of base){ if(x[12] === 2) lk++; else cnt[x[1]]++; }
+  let view = base.filter(x => (CG.kind < 0 || x[1] === CG.kind) && (!CG.cf || x[12] === CG.cf));
   if(q) view = view.filter(x => x[4].includes(q) || String(x[5]).includes(q) || String(x[6]).includes(q) || (x[7] || '').includes(q));
   const pages = Math.max(1, Math.ceil(view.length / PAGE)); CG.page = Math.min(CG.page, pages - 1);
   const slice = view.slice(CG.page * PAGE, CG.page * PAGE + PAGE);
@@ -889,15 +915,17 @@ async function pageChg(){
   const perLbl = per === 1 ? '최근 수집일' : per >= 999 ? `전체 (최근 ${ch.days}일)` : `최근 ${per}일`;
   h += `<div class="note">매일 자동 수집 때 <b>전날 수집 결과와 비교</b>해 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터를 바로 기록합니다. 공식 사이트가 하루 한 번(10~12시) 갱신되므로 하루 단위로 쌓입니다.
       닉네임을 바꾸거나 월드를 옮긴 캐릭터는 직업 · 전투력 · 업적점수 · 전문화가 거의 같은 캐릭터를 찾아 자동으로 이어 붙입니다.</div>
-    <div class="kpis">${CK.map((l, i) => `<div class="kpi"><div class="lb">${l} (명)</div><div class="v">${nf(cnt[i])}</div><div class="s">${esc(perLbl)}${CG.w ? ' · ' + esc(wName(CG.w)) : ''}</div></div>`).join('')}</div>
+    <div class="kpis">${CK.map((l, i) => `<div class="kpi"><div class="lb">${l} (명)</div><div class="v">${nf(cnt[i])}</div><div class="s">${esc(perLbl)}${CG.w ? ' · ' + esc(wName(CG.w)) : ''}</div></div>`).join('')}
+      <div class="kpi"><div class="lb">유력 후보 (건)</div><div class="v" style="color:var(--amb)">${nf(lk)}</div><div class="s">확실하지 않아 이어 붙이지 않음</div></div></div>
     <div class="ctrls"><span class="lbl">기간</span>${seg('cg-per', per, [[1, '최근 수집일'], [7, '7일'], [30, '30일'], [999, '전체']])}
       <span class="lbl">종류</span>${seg('cg-kind', CG.kind, [[-1, '전체'], [0, '닉네임'], [1, '길드'], [2, '월드 이전'], [3, '서버 이전']])}
+      <span class="lbl">확실도</span>${seg('cg-cf', CG.cf, [[0, '전체'], [1, '확실'], [2, '유력']])}
       <span class="lbl">월드</span><select data-ch="cg-w"><option value="0">전체</option>${ws.map(w => `<option value="${w.code}" ${w.code === CG.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>
       <span class="sp"></span><input class="q" data-in="cg-q" value="${esc(CG.q)}" placeholder="닉네임 · 길드 찾기"></div>
     <div class="sec" id="cglist">변경 목록 <small>${nf(view.length)}건 · 최근 순 · 줄을 누르면 캐릭터 정보</small></div>
     <div class="tbl" style="margin:0;border:0"><table class="rk chg"><tr><th>날짜</th><th>종류</th><th class="l">캐릭터 (현재)</th><th class="l">이전 → 이후</th><th class="l hide-s">현재 길드</th><th>전투력</th><th class="hide-s">대표 마스터리</th><th></th></tr>
     ${slice.map(x => `<tr class="${x[11] ? 'rkrow' : ''}" ${x[11] ? `data-act="char" data-w="${x[2]}" data-n="${esc(x[4])}"` : ''}>
-      <td class="dg" style="font-size:16px">${esc(dayStr(x[0]).slice(5))}</td><td>${ckBadge(x[1])}</td>
+      <td class="dg" style="font-size:16px">${esc(dayStr(x[0]).slice(5))}</td><td>${ckBadge(x[1])}${cfBadge(x[12], x[13], x[14])}</td>
       <td class="l"><div class="nm">${esc(x[4])}</div><div class="sub">${esc(wName(x[2]))} ${serverLabel(x[3])}</div></td>
       <td class="l nh">${ckFromTo(x[1], x[5], x[6])}</td><td class="l hide-s">${x[7] ? esc(x[7]) : '<span class="sub">-</span>'}</td>
       <td><span class="big" style="font-size:18px">${nf(x[8])}</span></td><td class="hide-s"><span class="dg" style="font-size:17px">${nf(x[9])}</span><div class="sub">${esc(mname(x[10]))}</div></td>
@@ -912,10 +940,14 @@ async function pageChg(){
   if(q) mv = mv.filter(m => m.n.includes(q) || (m.g || '').includes(q) || m.e.some(e => String(e[2]).includes(q) || String(e[3]).includes(q)));
   h += `<section class="ov fr" style="margin-top:14px">${NODES}
     <div class="bar"><span class="sid g">월드 · 서버 이전 캐릭터 자동 추적</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(mv.length)}명 · ${esc(perLbl)}</span></div>
-    <div class="note">월드나 서버를 옮긴 캐릭터를 자동으로 따라가서, 옮긴 뒤 <b>닉네임과 길드가 어떻게 바뀌었는지</b> 순서대로 보여줍니다. 별도로 등록할 필요 없이 이전이 확인되면 자동으로 이 목록에 들어옵니다.</div>
+    <div class="note">월드나 서버를 옮긴 캐릭터를 자동으로 따라가서, 옮긴 뒤 <b>닉네임과 길드가 어떻게 바뀌었는지</b> 순서대로 보여줍니다. 별도로 등록할 필요 없이 이전이 확인되면 자동으로 이 목록에 들어옵니다.<br>
+      <b class="cfb c1">확실</b> 직업 · 업적점수 · 마스터리 3종 · 전문화 · 전투력이 모두 맞는 캐릭터가 한 명뿐이라 같은 캐릭터로 이어 붙임 &nbsp;
+      <b class="cfb c2">유력</b> 비슷하지만 후보가 여럿이거나 일부 값이 달라 단정할 수 없음 (추적은 자동으로 옮기지 않고, [추적]에서 직접 바꿀 수 있음)</div>
     ${mv.length ? `<div class="mvgrid">${mv.slice(0, CG.mv).map(m => {
       const ev = m.e.slice().sort((a, b) => a[0] - b[0] || (b[1] >= 2) - (a[1] >= 2) || a[1] - b[1]);
-      return `<div class="mvcard ${m.seen ? 'rkrow' : ''}" ${m.seen ? `data-act="char" data-w="${m.w}" data-n="${esc(m.n)}"` : ''}>
+      return `<div class="mvcard ${m.seen ? 'rkrow' : ''} ${m.lv === '유력' ? 'lk2' : ''}" ${m.seen ? `data-act="char" data-w="${m.w}" data-n="${esc(m.n)}"` : ''}>
+        <div class="mvlv">${m.lv === '유력' ? `<span class="cfb c2">유력${m.nc > 1 ? ` · 후보 ${m.nc}명` : ''}</span><span class="sub" style="display:inline"> 일치도 ${m.score}% · 확실하지 않아 이어 붙이지 않음</span>` : '<span class="cfb c1">확실</span><span class="sub" style="display:inline"> 같은 캐릭터로 이어 붙임</span>'}</div>
+        ${m.lv === '유력' && m.from ? `<div class="sub">이전 전: ${esc(wName(m.from[0]))} ${m.from[2] ? serverLabel(m.from[2]) : ''} · <b>${esc(m.from[1])}</b> · ${esc(m.from[3] || '길드 없음')}</div>` : ''}
         <div class="mvh"><div><div class="nm">${esc(m.n)}</div><div class="sub">${esc(wName(m.w))} ${serverLabel(m.s)} · ${m.g ? esc(m.g) : '길드 없음'}</div></div>
           <div class="mvr"><span class="big" style="font-size:20px">${nf(m.bp)}</span><div class="sub">전투력</div></div></div>
         <ol class="tl">${ev.map(e => `<li><span class="dg">${esc(dayStr(e[0]).slice(5))}</span>${ckBadge(e[1])}<span class="nh">${ckFromTo(e[1], e[2], e[3])}</span></li>`).join('')}</ol>
@@ -953,11 +985,22 @@ function pageHelp(){
       <dt>랭킹</dt><dd>대표 마스터리 또는 전투력 순위 — 전체 월드 / 월드 / 서버, 직업 필터, 닉네임 · 길드 찾기. 전문화 레벨도 함께 표시합니다.</dd>
       <dt>TOP 20</dt><dd>대표 마스터리 TOP 20과 전투력 TOP 20.</dd>
       <dt>통계</dt><dd>캐릭터 수 · 평균 · 최고, 전투력 · 마스터리 · 전문화 분포, 직업 · 무기 통계, 서버별 비교, 순위 컷.</dd>
-      <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다.</dd>
+      <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다.</dd>
       <dt>경험치 계산기</dt><dd>사냥 결과 창 캡처를 끌어다 놓거나 Ctrl+V로 붙여넣으면 사냥터 · 사냥 시간 · M 경험치를 읽어 1분당 · 1시간당 경험치를 기록하고, 가장 효율 좋은 사냥터를 ★로 표시합니다. 사냥터 이름 앞뒤에 잘못 읽힌 글자는 자동으로 떼어냅니다. 잘못 읽은 기록은 [수정]으로 고칠 수 있습니다.</dd>
       <dt>즐겨찾기</dt><dd>☆로 즐겨찾기한 캐릭터의 현재 정보와 메모.</dd>
       <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
     </dl>`)
+  + sec('캐릭터 추적 방식 (닉네임 변경 · 월드 · 서버 이전)', `
+    <p>공식 사이트에는 캐릭터 고유 번호가 없어서, 매일 수집 때 <b>어제 있다가 오늘 사라진 캐릭터</b>와 <b>오늘 처음 보이는 캐릭터</b>의 수치를 비교해 같은 캐릭터를 찾습니다.</p>
+    <table class="htbl"><tr><th>비교 항목</th><th>같은 캐릭터로 보는 범위</th></tr>
+      <tr><td>직업</td><td>같아야 함</td></tr>
+      <tr><td>업적점수</td><td>줄지 않고 하루 0.3% 이내로 늘어남</td></tr>
+      <tr><td>마스터리 3종</td><td>무기 3개 레벨이 각각 그대로이거나 1 이내로 오름</td></tr>
+      <tr><td>전문화</td><td>줄지 않고 2~3 이내로 오름</td></tr>
+      <tr><td>전투력</td><td>−5% ~ +10%</td></tr></table>
+    <ul><li><b>확실</b>: 위 항목이 모두 맞는 캐릭터가 <b>한 명뿐</b>일 때(또는 같은 서버 · 같은 길드에서 닉네임만 바뀐 경우) 같은 캐릭터로 이어 붙입니다. 이름 · 월드 · 서버가 모두 바뀌어도 찾습니다. 추적 · 즐겨찾기 · 메모도 새 이름으로 자동으로 옮겨집니다.</li>
+      <li><b>유력</b>: 맞는 후보가 여럿이거나 일부 값이 조금 다를 때는 단정하지 않고 [변경 이력]에 유력으로만 표시합니다. 추적 중인 캐릭터라면 [추적] 화면에 후보가 나오고 [이 캐릭터로 바꾸기]로 직접 옮길 수 있습니다.</li>
+      <li>사라진 뒤 <b>7일 안</b>에 다시 나타나면 이어 붙입니다. 옮긴 곳에서 수집 기준(구월드 14만 · 신월드 500위) 밖이면 기준 안으로 들어온 날 찾습니다.</li></ul>`)
   + sec('알아둘 점', `
     <ul><li>추적 · 즐겨찾기 · 메모 · 마스터리 입력 · 경험치 기록은 <b>이 브라우저에만</b> 저장됩니다. 다른 기기로 옮기려면 [캐릭터] · [추적] 아래 [백업 저장] / [백업 불러오기]를 쓰세요.</li>
       <li>같은 월드 안 닉네임 변경은 직업 · 업적점수 · 길드 · 서버가 거의 같을 때만 자동으로 연결합니다(잘못 연결 방지). 못 따라가면 [추적]의 [닉네임/월드]로 직접 바꾸세요.</li>
@@ -1606,6 +1649,7 @@ document.addEventListener('click', async ev => {
     else if(act === 'top-tab'){ TOPTAB = b.dataset.v; lsSet('l9toptab', TOPTAB); await render(); }
     else if(act === 'my-reset'){ ST.cur = null; ST.recent = []; saveSession(); await render(); window.scrollTo({top: 0}); toast('캐릭터 화면을 초기화했습니다 (추적 · 즐겨찾기는 그대로)'); }
     else if(act === 'cg-per'){ CG.per = Number(b.dataset.v); CG.page = 0; CG.mv = 24; saveCG(); await render(); }
+    else if(act === 'cg-cf'){ CG.cf = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-kind'){ CG.kind = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-page'){ CG.page = Math.max(0, Number(b.dataset.p)); await render(); document.getElementById('cglist')?.scrollIntoView({block: 'start'}); }
     else if(act === 'cg-more'){ CG.mv += 24; await render(); }
@@ -1630,6 +1674,7 @@ document.addEventListener('click', async ev => {
     else if(act === 'guildgo'){ ev.preventDefault(); if($('#dlgR').open) $('#dlgR').close(); GS.q = b.dataset.g; openGuild(gkey(b.dataset.w, b.dataset.s, b.dataset.g)); }
     else if(act === 'setcur'){ setCur(b.dataset.w, b.dataset.n); await render(); window.scrollTo({top: 0}); }
     else if(act === 'tr-chk'){ TRCHK.has(k) ? TRCHK.delete(k) : TRCHK.add(k); render(); }
+    else if(act === 'mv-apply'){ if(!confirm(`${b.dataset.on} → ${b.dataset.n} (${wName(b.dataset.w)}) 로 바꿀까요?\n추적 · 즐겨찾기 · 메모 · 입력한 마스터리가 함께 옮겨집니다.`)) return; applyMove(b.dataset.ow, b.dataset.on, b.dataset.w, b.dataset.n); toast('바꿨습니다'); await render(); }
     else if(act === 'tr-freset'){ Object.assign(TRF, {q: '', g: '', w: 0}); saveTRF(); render(); }
     else if(act === 'tr-chkall'){ const all = TRVIEW.keys.length ? TRVIEW.keys : ST.tracked.map(t => key(t.w, t.n)); if(all.every(x => TRCHK.has(x))) TRCHK.clear(); else all.forEach(x => TRCHK.add(x)); render(); }
     else if(act === 'tr-chknone'){ TRCHK.clear(); render(); }
