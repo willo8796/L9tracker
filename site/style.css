@@ -809,3 +809,28 @@ textarea.memo{width:100%;font:inherit;color:var(--hi);background:#02060b;border:
 textarea.memo:focus{outline:none;border-color:var(--hi);box-shadow:var(--glow)}
 .trmemo{font-size:11px;color:var(--amb);margin-top:2px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:640px){.tmemo-box{grid-template-columns:1fr;padding:10px 12px}.tmemo-box label{padding-top:0}.trmemo{max-width:140px}}
+
+/* v1.0.0 — 이전 닉네임 · 연관 추정 */
+.cfb.c3{color:#b9c3d0;border-style:dotted;background:rgba(185,195,208,.06)}
+.oldnm{font-size:11px;color:var(--amb);margin-top:2px}
+.oldnm .hit,.onr .hit{background:rgba(255,210,122,.25);color:var(--hi)}
+.oldnote{margin:0;padding:10px 16px;border-bottom:1px solid var(--line2);background:rgba(255,210,122,.05);font-size:12.5px;line-height:1.7}
+.onr{display:flex;flex-wrap:wrap;gap:4px 14px;padding:5px 0;border-top:1px dashed var(--line2)}
+.onr:first-of-type{border-top:0}
+.onr-o .cfb{margin-left:0;margin-right:4px}
+.asgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;padding:14px 16px}
+.ascard{border:1px dotted rgba(185,195,208,.6);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.ash{display:flex;justify-content:space-between;gap:10px;text-align:left}
+.ash .nh .old{color:var(--dim);text-decoration:line-through}.ash .nh .arrow{margin:0 6px;color:var(--dim)}.ash .nh b{color:var(--hi);font-size:15px}
+.asrel{border-top:1px solid var(--line2);padding-top:6px;display:flex;flex-direction:column;gap:5px;font-size:12.5px}
+.asr .cfb{margin:0 6px 0 0}
+.asr b{color:var(--hi)}
+@media (max-width:640px){.asgrid{grid-template-columns:1fr;padding:10px}.oldnote{padding:10px 12px}}
+
+.mdate{display:none}
+@media (max-width:640px){
+  table.rk.chg .cgd{display:none}
+  .mdate{display:block;font-size:13px;color:var(--dim);margin-bottom:3px}
+  table.rk.chg td,table.rk.chg th{padding:7px 4px}
+  table.rk.chg .ckb{font-size:10.5px;padding:1px 4px}
+}

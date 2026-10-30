@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '0.9.9';
+const VERSION = '1.0.0';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -367,7 +367,7 @@ function subject(c, idx, mode){
   </div>`;
   const tm = ST.tracked.find(t => key(t.w, t.n) === c.k);
   if(tm) h += `<div class="tmemo-box"><label>메모</label><textarea class="memo" data-memo="${esc(c.k)}" rows="2" placeholder="이 캐릭터에 대한 메모 (입력하면 자동 저장 · 이 브라우저에만 저장)">${esc(tm.memo || '')}</textarea></div>`;
-  if((D.meta || D.quick) && !ok) h += `<div class="alert" data-miss=""${esc(c.k)}">${esc(wName(c.t.w))}에서 검색되지 않습니다 — ${CRIT_SHORT()} 밖이거나 닉네임 변경·월드 이전 가능성 <span class="cands-msg"></span></div>`;
+  if((D.meta || D.quick) && !ok) h += `<div class="alert" data-miss="${esc(c.k)}">${esc(wName(c.t.w))}에서 검색되지 않습니다 — ${CRIT_SHORT()} 밖이거나 닉네임 변경·월드 이전 가능성 <span class="cands-msg"></span></div>`;
   const useEst = c.est && (!it || (c.mLast && c.mLast > it.d));
   const shown = useEst ? {l: c.est.l, p: c.est.p, d: c.mLast} : it;
   const pct = shown && shown.p != null && shown.p !== '' ? Number(shown.p) : null;
@@ -881,8 +881,8 @@ async function pageGuild(){
 }
 
 /* ============================================================ 변경 이력 */
-const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, q: '', page: 0, mv: 24, cf: 0}, x || {}, {page: 0, mv: 24}); })();
-function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, q: CG.q, cf: CG.cf})); }catch(e){} }
+const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0}, x || {}, {page: 0, mv: 24}); })();
+function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf})); }catch(e){} }
 function cfBadge(c, n, sc){ return c === 1 ? '<span class="cfb c1" title="이 캐릭터로 확실히 이어 붙였습니다">확실</span>' : c === 2 ? `<span class="cfb c2" title="비슷한 캐릭터 — 확실하지 않아 이어 붙이지 않았습니다">유력${n > 1 ? ` · 후보 ${n}명` : ''}</span>` : ''; }
 const CK = ['닉네임 변경', '길드 변경', '월드 이전', '서버 이전'];
 async function changes(){ if(!D.chg) D.chg = getJSON('data/changes.json').catch(() => null); return D.chg; }
@@ -896,6 +896,21 @@ function chgTrackBtn(w, n, seen){
   const t = ST.tracked.some(x => x.w === w && x.n === n);
   return (t ? '<span class="sub">추적 중</span>' : `<button class="mini-btn" data-act="track" data-w="${w}" data-n="${esc(n)}">+ 추적</button>`);
 }
+async function oldNameNote(q, ch, wf){
+  const hits = [];
+  for(const [w, n, l, seen] of ch.names || []) for(const e of l) if(e[1] && e[1].includes(q) && (!wf || w === wf)) hits.push({w, cur: n, old: e[1], d: e[0], seen});
+  if(!hits.length) return '';
+  hits.sort((a, b) => b.d - a.d);
+  const out = [];
+  for(const x of hits.slice(0, 8)){
+    let holder = null;
+    if(readyWorlds().some(v => v.code === x.w)){ const j = await world(x.w).catch(() => null); const r = j?.byName.get(x.old); if(r) holder = r; }
+    out.push(`<div class="onr"><span><b class="hit">${esc(x.old)}</b> <span class="sub" style="display:inline">${esc(wName(x.w))}</span> 은(는) 예전 닉네임 → 지금 <a class="nmlink" ${x.seen ? `data-act="char" data-w="${x.w}" data-n="${esc(x.cur)}"` : ''}><b>${esc(x.cur)}</b></a> <span class="sub" style="display:inline">(${esc(dayStr(x.d).slice(5))} 변경)</span></span>
+      ${holder ? `<span class="onr-o"><span class="cfb c2">주의</span> 지금 <b>${esc(x.old)}</b> 이름은 <b>다른 캐릭터</b>가 쓰는 중 · ${serverLabel(holder[C.s])} · ${esc(holder[C.g] || '길드 없음')} · ${esc(jobName(holder[C.j]))} · 전투력 ${nf(holder[C.bp])} <a class="nmlink" data-act="char" data-w="${x.w}" data-n="${esc(x.old)}">보기</a></span>`
+        : `<span class="onr-o sub">지금 이 이름을 쓰는 캐릭터는 수집 기준 안에 없음</span>`}</div>`);
+  }
+  return `<div class="oldnote"><div class="sub">찾는 이름이 <b>다른 캐릭터의 예전 닉네임</b>이기도 합니다 — 같은 이름이라도 지금 그 이름을 쓰는 캐릭터와 다른 캐릭터일 수 있습니다</div>${out.join('')}</div>`;
+}
 async function pageChg(){
   if(!readyWorlds().length) return noData();
   const ch = await changes();
@@ -903,12 +918,21 @@ async function pageChg(){
     <div class="bar"><span class="sid g">변경 이력</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">기준일 ${esc(D.meta.date)} · ${critText()}</span></div>`;
   if(!ch) return h + `<div class="note">변경 이력은 v0.9.0 이후 첫 자동 수집부터 기록됩니다. 전날 수집 결과와 비교하므로 이틀 이상 수집되면 표시됩니다.</div></section>`;
   const today = ch.date, per = CG.per;
+  const amap = new Map((ch.assoc || []).map(a => [a.d + '|' + key(a.w, a.n), a]));
+  const assocOf = x => x[1] === 0 ? amap.get(x[0] + '|' + key(x[2], x[4])) : null;
   const inP = d => per >= 999 || d > today - per;
   const q = CG.q.trim();
-  const base = ch.list.filter(x => inP(x[0]) && (!CG.w || x[2] === CG.w));
+  const ws0 = readyWorlds(), svs = CG.w ? (ws0.find(w => w.code === CG.w)?.servers || []) : [];
+  if(!svs.includes(CG.s)) CG.s = 0;
+  const inWS = (w, sv) => (!CG.w || w === CG.w) && (!CG.s || sv === CG.s);
+  // 이전 닉네임: 캐릭터(월드|현재 닉네임) → 예전 닉네임들
+  const olds = new Map(); for(const [w, n, l] of ch.names || []) olds.set(key(w, n), l);
+  const oldNames = (w, n) => (olds.get(key(w, n)) || []).map(e => e[1]).filter(Boolean);
+  const qm = x => { const o = oldNames(x[2], x[4]); return x[4].includes(q) || String(x[5]).includes(q) || String(x[6]).includes(q) || (x[7] || '').includes(q) || o.some(v => v.includes(q)); };
+  const base = ch.list.filter(x => inP(x[0]) && inWS(x[2], x[3]));
   const cnt = [0, 0, 0, 0]; let lk = 0; for(const x of base){ if(x[12] === 2) lk++; else cnt[x[1]]++; }
   let view = base.filter(x => (CG.kind < 0 || x[1] === CG.kind) && (!CG.cf || x[12] === CG.cf));
-  if(q) view = view.filter(x => x[4].includes(q) || String(x[5]).includes(q) || String(x[6]).includes(q) || (x[7] || '').includes(q));
+  if(q) view = view.filter(qm);
   const pages = Math.max(1, Math.ceil(view.length / PAGE)); CG.page = Math.min(CG.page, pages - 1);
   const slice = view.slice(CG.page * PAGE, CG.page * PAGE + PAGE);
   const ws = readyWorlds();
@@ -921,23 +945,44 @@ async function pageChg(){
       <span class="lbl">종류</span>${seg('cg-kind', CG.kind, [[-1, '전체'], [0, '닉네임'], [1, '길드'], [2, '월드 이전'], [3, '서버 이전']])}
       <span class="lbl">확실도</span>${seg('cg-cf', CG.cf, [[0, '전체'], [1, '확실'], [2, '유력']])}
       <span class="lbl">월드</span><select data-ch="cg-w"><option value="0">전체</option>${ws.map(w => `<option value="${w.code}" ${w.code === CG.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>
-      <span class="sp"></span><input class="q" data-in="cg-q" value="${esc(CG.q)}" placeholder="닉네임 · 길드 찾기"></div>
+      <span class="lbl">서버</span><select data-ch="cg-s" ${CG.w ? '' : 'disabled title="월드를 먼저 고르세요"'}><option value="0">전체</option>${svs.map(v => `<option value="${v}" ${v === CG.s ? 'selected' : ''}>${serverLabel(v)}</option>`).join('')}</select>
+      <span class="sp"></span><input class="q" data-in="cg-q" value="${esc(CG.q)}" placeholder="닉네임(이전 닉네임 포함) · 길드 찾기"></div>
+    ${q ? await oldNameNote(q, ch, CG.w) : ''}
     <div class="sec" id="cglist">변경 목록 <small>${nf(view.length)}건 · 최근 순 · 줄을 누르면 캐릭터 정보</small></div>
-    <div class="tbl" style="margin:0;border:0"><table class="rk chg"><tr><th>날짜</th><th>종류</th><th class="l">캐릭터 (현재)</th><th class="l">이전 → 이후</th><th class="l hide-s">현재 길드</th><th>전투력</th><th class="hide-s">대표 마스터리</th><th></th></tr>
+    <div class="tbl" style="margin:0;border:0"><table class="rk chg"><tr><th class="cgd">날짜</th><th>종류</th><th class="l">캐릭터 (현재)</th><th class="l">이전 → 이후</th><th class="l hide-s">현재 길드</th><th>전투력</th><th class="hide-s">대표 마스터리</th><th>전문화</th><th class="hide-s">업적점수</th><th></th></tr>
     ${slice.map(x => `<tr class="${x[11] ? 'rkrow' : ''}" ${x[11] ? `data-act="char" data-w="${x[2]}" data-n="${esc(x[4])}"` : ''}>
-      <td class="dg" style="font-size:16px">${esc(dayStr(x[0]).slice(5))}</td><td>${ckBadge(x[1])}${cfBadge(x[12], x[13], x[14])}</td>
-      <td class="l"><div class="nm">${esc(x[4])}</div><div class="sub">${esc(wName(x[2]))} ${serverLabel(x[3])}</div></td>
+      <td class="dg cgd" style="font-size:16px">${esc(dayStr(x[0]).slice(5))}</td><td><span class="mdate dg">${esc(dayStr(x[0]).slice(5))}</span>${ckBadge(x[1])}${cfBadge(x[12], x[13], x[14])}</td>
+      <td class="l"><div class="nm">${esc(x[4])}</div><div class="sub">${esc(wName(x[2]))} ${serverLabel(x[3])}</div>${(() => { const o = oldNames(x[2], x[4]).filter(v => v !== x[5] || x[1] !== 0); return o.length ? `<div class="oldnm">이전 닉네임 · ${o.map(v => `<span class="${q && v.includes(q) ? 'hit' : ''}">${esc(v)}</span>`).join(', ')}</div>` : ''; })()}${assocOf(x) ? `<div class="sub"><span class="cfb c3">연관 추정 ${assocOf(x).rel.length}</span></div>` : ''}</td>
       <td class="l nh">${ckFromTo(x[1], x[5], x[6])}</td><td class="l hide-s">${x[7] ? esc(x[7]) : '<span class="sub">-</span>'}</td>
       <td><span class="big" style="font-size:18px">${nf(x[8])}</span></td><td class="hide-s"><span class="dg" style="font-size:17px">${nf(x[9])}</span><div class="sub">${esc(mname(x[10]))}</div></td>
-      <td style="white-space:nowrap">${chgTrackBtn(x[2], x[4], x[11])}</td></tr>`).join('') || '<tr><td colspan="8" class="emptyrow">이 기간에 기록된 변경이 없습니다</td></tr>'}
+      <td><span class="dg" style="font-size:17px">${nf(x[15])}</span></td><td class="hide-s"><span class="dg" style="font-size:17px">${nf(x[16])}</span></td>
+      <td style="white-space:nowrap">${chgTrackBtn(x[2], x[4], x[11])}</td></tr>`).join('') || '<tr><td colspan="10" class="emptyrow">이 기간에 기록된 변경이 없습니다</td></tr>'}
     </table></div>
     ${pages > 1 ? `<div class="pager"><button class="btn" data-act="cg-page" data-p="0" ${CG.page ? '' : 'disabled'}>처음</button><button class="btn" data-act="cg-page" data-p="${CG.page - 1}" ${CG.page ? '' : 'disabled'}>이전</button>
       <span class="pi">${CG.page + 1} / ${pages} 쪽</span>
       <button class="btn" data-act="cg-page" data-p="${CG.page + 1}" ${CG.page < pages - 1 ? '' : 'disabled'}>다음</button><button class="btn" data-act="cg-page" data-p="${pages - 1}" ${CG.page < pages - 1 ? '' : 'disabled'}>끝</button></div>` : ''}
   </section>`;
   // 월드 · 서버 이전 캐릭터 자동 추적
-  let mv = (ch.moved || []).filter(m => inP(m.last) && (!CG.w || m.w === CG.w || m.e.some(e => e[1] === 2 && (e[2] === wName(CG.w) || e[3] === wName(CG.w)))));
-  if(q) mv = mv.filter(m => m.n.includes(q) || (m.g || '').includes(q) || m.e.some(e => String(e[2]).includes(q) || String(e[3]).includes(q)));
+  let mv = (ch.moved || []).filter(m => inP(m.last) && ((inWS(m.w, m.s)) || (!CG.s && m.e.some(e => e[1] === 2 && (e[2] === wName(CG.w) || e[3] === wName(CG.w))))));
+  if(q) mv = mv.filter(m => m.n.includes(q) || (m.g || '').includes(q) || m.e.some(e => String(e[2]).includes(q) || String(e[3]).includes(q)) || oldNames(m.w, m.n).some(v => v.includes(q)));
+  // 연관 닉네임 추정 (참고)
+  let as = (ch.assoc || []).filter(a => inP(a.d) && (inWS(a.w, a.s) || a.rel.some(r => inWS(r.w, r.s))));
+  if(q) as = as.filter(a => a.n.includes(q) || a.old.includes(q) || (a.g || '').includes(q) || a.rel.some(r => r.n.includes(q) || (r.now || '').includes(q) || (r.g || '').includes(q)));
+  h += `<section class="ov fr" style="margin-top:14px" id="cgassoc">${NODES}
+    <div class="bar"><span class="sid g">닉네임 연관 추정 <span class="cfb c3">참고</span></span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(as.length)}건 · ${esc(perLbl)}</span></div>
+    <div class="note">닉네임을 바꾼 캐릭터의 <b>새 이름</b>이 다른 캐릭터의 이름과 비슷한 경우입니다. 예를 들어 A가 B 캐릭터를 사서 A와 관련된 이름(원래 이름, 번호만 붙인 이름 등)으로 바꾼 경우를 찾습니다.
+      비교 대상: 최근 30일 안에 <b>사라진 캐릭터</b> · 다른 캐릭터가 <b>예전에 쓰던 이름</b> · 같은 월드의 <b>현재 캐릭터</b>(3글자 이상).
+      <b>이름만 비교한 것이라 같은 사람이라는 근거가 되지 않습니다. 참고용으로만 보세요.</b></div>
+    ${as.length ? `<div class="asgrid">${as.slice(0, CG.mv).map(a => `<div class="ascard">
+        <div class="ash ${a.seen ? 'rkrow' : ''}" ${a.seen ? `data-act="char" data-w="${a.w}" data-n="${esc(a.n)}"` : ''}><div><span class="sub" style="display:inline">${esc(dayStr(a.d).slice(5))} 닉네임 변경</span>
+          <div class="nh"><span class="old">${esc(a.old)}</span><span class="arrow">→</span><b>${esc(a.n)}</b></div>
+          <div class="sub">${esc(wName(a.w))} ${serverLabel(a.s)} · ${esc(a.g || '길드 없음')}</div></div>
+          <div class="mvr"><span class="big" style="font-size:18px">${nf(a.bp)}</span><div class="sub">전투력</div></div></div>
+        <div class="asrel"><div class="sub">비슷한 이름</div>${a.rel.map(r => `<div class="asr"><span class="cfb c3">${esc(r.why)}</span>
+          <b>${esc(r.n)}</b> <span class="sub" style="display:inline">${esc(r.kind)}${r.now ? ` (지금 이름: ${esc(r.now)})` : ''} · ${esc(wName(r.w))} ${r.s ? serverLabel(r.s) : ''}${r.g ? ' · ' + esc(r.g) : ''}${r.kind === '사라진 캐릭터' ? ` · 마지막 ${esc(dayStr(r.d).slice(5))}` : ''}${r.bp ? ' · ' + nf(r.bp) : ''}</span></div>`).join('')}</div></div>`).join('')}</div>
+      ${as.length > CG.mv ? `<div class="pager"><button class="btn" data-act="cg-more">더 보기 (${nf(as.length - CG.mv)}건 남음)</button></div>` : ''}`
+      : '<div class="empty" style="padding:14px 16px">이 기간에 연관 추정된 닉네임 변경이 없습니다</div>'}
+  </section>`;
   h += `<section class="ov fr" style="margin-top:14px">${NODES}
     <div class="bar"><span class="sid g">월드 · 서버 이전 캐릭터 자동 추적</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(mv.length)}명 · ${esc(perLbl)}</span></div>
     <div class="note">월드나 서버를 옮긴 캐릭터를 자동으로 따라가서, 옮긴 뒤 <b>닉네임과 길드가 어떻게 바뀌었는지</b> 순서대로 보여줍니다. 별도로 등록할 필요 없이 이전이 확인되면 자동으로 이 목록에 들어옵니다.<br>
@@ -985,7 +1030,7 @@ function pageHelp(){
       <dt>랭킹</dt><dd>대표 마스터리 또는 전투력 순위 — 전체 월드 / 월드 / 서버, 직업 필터, 닉네임 · 길드 찾기. 전문화 레벨도 함께 표시합니다.</dd>
       <dt>TOP 20</dt><dd>대표 마스터리 TOP 20과 전투력 TOP 20.</dd>
       <dt>통계</dt><dd>캐릭터 수 · 평균 · 최고, 전투력 · 마스터리 · 전문화 분포, 직업 · 무기 통계, 서버별 비교, 순위 컷.</dd>
-      <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다.</dd>
+      <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다. 월드 · 서버 필터, 이전 닉네임으로도 찾기(지금 그 이름을 쓰는 다른 캐릭터와 구분 표시), 캐릭터를 산 뒤 관련 닉네임으로 바꾼 경우를 찾는 <b>닉네임 연관 추정(참고)</b>이 있습니다.</dd>
       <dt>경험치 계산기</dt><dd>사냥 결과 창 캡처를 끌어다 놓거나 Ctrl+V로 붙여넣으면 사냥터 · 사냥 시간 · M 경험치를 읽어 1분당 · 1시간당 경험치를 기록하고, 가장 효율 좋은 사냥터를 ★로 표시합니다. 사냥터 이름 앞뒤에 잘못 읽힌 글자는 자동으로 떼어냅니다. 잘못 읽은 기록은 [수정]으로 고칠 수 있습니다.</dd>
       <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
     </dl>`)
@@ -1736,7 +1781,8 @@ document.addEventListener('change', e => {
   else if(t === 'tr-g'){ TRF.g = e.target.value; saveTRF(); render(); }
   else if(t === 'tr-w'){ TRF.w = Number(e.target.value); saveTRF(); render(); }
   else if(t === 'tr-sort'){ TRF.sort = e.target.value; saveTRF(); render(); }
-  else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.page = 0; CG.mv = 24; saveCG(); render(); }
+  else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.s = 0; CG.page = 0; CG.mv = 24; saveCG(); render(); }
+  else if(t === 'cg-s'){ CG.s = Number(e.target.value); CG.page = 0; CG.mv = 24; saveCG(); render(); }
 });
 let QT = null;
 document.addEventListener('input', e => {
