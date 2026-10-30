@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '0.9.8';
+const VERSION = '0.9.9';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -17,12 +17,23 @@ const DEFAULT_MASTERIES = [['Mastery_Hand','맨손'],['Mastery_Sword','검과 �
 
 /* ------------------------------------------------------------ 저장소 (이 브라우저에만 저장) */
 const SKEY = 'l9tracker.v6';
-function freshStore(){ return {v:1, tracked:[], mastery:{}, integ:{}, imported:false, fav:[], expr:[]}; }
+function freshStore(){ return {v:1, tracked:[], mastery:{}, integ:{}, imported:false, expr:[]}; }
+// v0.9.9: 즐겨찾기 기능 삭제 → 메모가 있던 즐겨찾기는 추적 캐릭터 메모로 옮김 (추적 안 하던 캐릭터는 추적에 추가)
+function migrateFav(){
+  const fs = ST.fav; if(!fs) return false;
+  for(const f of fs){
+    const memo = (f.memo || '').trim(); if(!memo) continue;
+    let t = ST.tracked.find(x => x.w === f.w && x.n === f.n);
+    if(!t){ t = {w: f.w, n: f.n, added: f.added || todayKST()}; ST.tracked.push(t); }
+    if(!t.memo) t.memo = memo; else if(!t.memo.includes(memo)) t.memo += '\n' + memo;
+  }
+  delete ST.fav; return true;
+}
 function loadStore(){
   try{ const s = JSON.parse(localStorage.getItem(SKEY) || 'null'); if(s && s.v === 1) return Object.assign(freshStore(), s); }catch(e){}
   return freshStore();
 }
-let ST = loadStore();
+let ST = loadStore(); migrateFav();
 function persisted(){ const o = Object.assign({}, ST); delete o.cur; delete o.recent; return o; }
 function saveStore(){
   try{ localStorage.setItem(SKEY, JSON.stringify(persisted())); }catch(e){ if(!SYNC.on) toast('브라우저에 저장하지 못했습니다 — [백업 저장]으로 보관하세요'); }
@@ -262,7 +273,6 @@ async function followMoves(){
       if(t !== ST.cur) notes.push(`${wName(t.w)} ${t.n} → ${wName(w)} ${n} (일치도 ${found.score}%)`);
       if(ST.mastery[ok]){ ST.mastery[nk] = ST.mastery[ok]; delete ST.mastery[ok]; }
       if(ST.integ[ok]){ ST.integ[nk] = ST.integ[ok]; delete ST.integ[ok]; }
-      const f = favOf(t.w, t.n); if(f){ f.w = w; f.n = n; }
       if(ST.cur && t !== ST.cur && ST.cur.w === t.w && ST.cur.n === t.n){ ST.cur.w = w; ST.cur.n = n; }
       t.w = w; t.n = n;
     }
@@ -270,7 +280,7 @@ async function followMoves(){
   saveStore(); saveSession();
   return notes;
 }
-// 유력 후보로 직접 바꾸기 (추적 · 즐겨찾기 · 메모 · 입력한 마스터리를 새 캐릭터로 옮김)
+// 유력 후보로 직접 바꾸기 (추적 · 메모 · 입력한 마스터리를 새 캐릭터로 옮김)
 function applyMove(ow, on, w, n){
   ow = Number(ow); w = Number(w);
   const ok = key(ow, on), nk = key(w, n);
@@ -279,7 +289,6 @@ function applyMove(ow, on, w, n){
   else if(t){ t.w = w; t.n = n; }
   if(ST.mastery[ok] && !ST.mastery[nk]){ ST.mastery[nk] = ST.mastery[ok]; delete ST.mastery[ok]; }
   if(ST.integ[ok] && !ST.integ[nk]){ ST.integ[nk] = ST.integ[ok]; delete ST.integ[ok]; }
-  const f = favOf(ow, on); if(f && !favOf(w, n)){ f.w = w; f.n = n; }
   if(ST.cur && ST.cur.w === ow && ST.cur.n === on){ ST.cur = {w, n}; }
   if(TRSEL === ok){ TRSEL = nk; lsSet('l9trsel', nk); }
   saveStore(); saveSession();
@@ -352,12 +361,13 @@ function subject(c, idx, mode){
       <button data-act="mastery" data-k="${esc(c.k)}">마스터리 입력</button>
       ${trk ? `<button data-act="edit" data-k="${esc(c.k)}">닉네임/월드</button>` : (tracked ? `<button data-act="gotrack" data-k="${esc(c.k)}">✓ 추적 중 · 추적에서 보기</button>` : `<button data-act="track" data-w="${c.t.w}" data-n="${esc(c.t.n)}">+ 추적 추가</button>`)}
       <button data-act="rankof" data-k="${esc(c.k)}">랭킹에서 보기</button>
-      <button data-act="fav" data-w="${c.t.w}" data-n="${esc(c.t.n)}">${isFav(c.t.w, c.t.n) ? '★ 즐겨찾기' : '☆ 즐겨찾기'}</button>
       ${trk ? `<button data-act="del" data-k="${esc(c.k)}">추적 해제</button>` : ''}
     </div>
     <div class="dots" title="검색됨 · 일별 기록 · 통합 레벨"><i class="${ok ? 'on' : ''}"></i><i class="${c.series.length ? 'on' : ''}"></i><i class="${it ? 'on' : ''}"></i></div>
   </div>`;
-  if((D.meta || D.quick) && !ok) h += `<div class="alert" data-miss="${esc(c.k)}">${esc(wName(c.t.w))}에서 검색되지 않습니다 — ${CRIT_SHORT()} 밖이거나 닉네임 변경·월드 이전 가능성 <span class="cands-msg"></span></div>`;
+  const tm = ST.tracked.find(t => key(t.w, t.n) === c.k);
+  if(tm) h += `<div class="tmemo-box"><label>메모</label><textarea class="memo" data-memo="${esc(c.k)}" rows="2" placeholder="이 캐릭터에 대한 메모 (입력하면 자동 저장 · 이 브라우저에만 저장)">${esc(tm.memo || '')}</textarea></div>`;
+  if((D.meta || D.quick) && !ok) h += `<div class="alert" data-miss=""${esc(c.k)}">${esc(wName(c.t.w))}에서 검색되지 않습니다 — ${CRIT_SHORT()} 밖이거나 닉네임 변경·월드 이전 가능성 <span class="cands-msg"></span></div>`;
   const useEst = c.est && (!it || (c.mLast && c.mLast > it.d));
   const shown = useEst ? {l: c.est.l, p: c.est.p, d: c.mLast} : it;
   const pct = shown && shown.p != null && shown.p !== '' ? Number(shown.p) : null;
@@ -488,10 +498,10 @@ function histPanels(c){
     <div class="hpanels">${panel('닉네임 변경 이력', names, c.t.n, '닉네임 변경 없음')}${panel('길드 변경 이력', guilds, curG, '길드 변경 없음')}</div>
     ${others.length ? `<div class="chg"><div class="tbl" style="margin-top:0"><table><tr><th>기준일</th><th>구분</th><th>이전 → 이후</th></tr>${others.map(x => `<tr><td>${esc(x.d)}</td><td><span class="kt k-${esc(x.kind.split(' ')[0])}">${esc(x.kind)}</span></td><td><span class="old">${esc(x.before || '없음')}</span><span class="arrow">→</span><span class="new">${esc(x.after || '없음')}</span></td></tr>`).join('')}</table></div></div>` : ''}`;
 }
-const BACKUP_NOTE = `<div class="note fr" style="margin-top:14px">추적 · 즐겨찾기 · 직접 입력한 마스터리는 <b>이 브라우저</b>에 저장됩니다. 다른 기기로 옮기거나 보관하려면
+const BACKUP_NOTE = `<div class="note fr" style="margin-top:14px">추적 · 메모 · 직접 입력한 마스터리는 <b>이 브라우저</b>에 저장됩니다. 다른 기기로 옮기거나 보관하려면
      <button class="mini-btn" data-act="backup">백업 저장</button> <button class="mini-btn" data-act="restore">백업 불러오기</button></div>`;
 // 검색한 캐릭터·최근 본 캐릭터는 이번 접속(탭) 동안만 기억 — 새로 접속하면 첫 화면은 비어 있음
-// (추적 · 즐겨찾기 · 메모 · 경험치 기록은 그대로 저장)
+// (추적 · 메모 · 경험치 기록은 그대로 저장)
 function saveSession(){ try{ sessionStorage.setItem('l9session', JSON.stringify({cur: ST.cur || null, recent: ST.recent || []})); }catch(e){} }
 function loadSession(){
   let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9session') || 'null'); }catch(e){}
@@ -509,7 +519,7 @@ async function pageMy(){
   const rec = (ST.recent || []).filter(x => !(x.w === ST.cur.w && x.n === ST.cur.n));
   setTimeout(fillMissCands, 0);
   return `<div class="recent fr">${rec.length ? `<span class="lbl">최근 본 캐릭터</span>${rec.map(x => `<button class="chip" data-act="setcur" data-w="${x.w}" data-n="${esc(x.n)}"><b>${esc(x.n)}</b> <small>${esc(wName(x.w))}</small></button>`).join('')}` : '<span class="lbl">검색한 캐릭터 1명이 표시됩니다</span>'}
-      <button class="btn myreset" data-act="my-reset" title="표시 중인 캐릭터와 최근 본 캐릭터를 지웁니다 (추적 · 즐겨찾기는 그대로)">화면 초기화</button></div>`
+      <button class="btn myreset" data-act="my-reset" title="표시 중인 캐릭터와 최근 본 캐릭터를 지웁니다 (추적 · 메모는 그대로)">화면 초기화</button></div>`
     + subject(CARDS[0], 0, 'main') + BACKUP_NOTE;
 }
 let TRSEL = lsGet('l9trsel', '');
@@ -537,7 +547,7 @@ function trFilter(cards){
   const q = TRF.q.trim().toLowerCase();
   let v = cards.filter(c => (!TRF.w || c.t.w === TRF.w)
     && (!TRF.g || (TRF.g === '-' ? !trGuild(c) : trGuild(c) === TRF.g))
-    && (!q || c.t.n.toLowerCase().includes(q) || trGuild(c).toLowerCase().includes(q)));
+    && (!q || c.t.n.toLowerCase().includes(q) || trGuild(c).toLowerCase().includes(q) || (c.t.memo || '').toLowerCase().includes(q)));
   const bp = c => (c.r ? c.r[C.bp] : c.last?.bp) || 0, ml = c => (c.r ? c.r[C.ml] : c.last?.ml) || 0, sp = c => (c.r ? c.r[C.sp] : c.last?.sp) || 0;
   const by = {bp: (a, b) => bp(b) - bp(a), ml: (a, b) => ml(b) - ml(a) || bp(b) - bp(a), sp: (a, b) => sp(b) - sp(a),
     name: (a, b) => a.t.n.localeCompare(b.t.n, 'ko'), guild: (a, b) => (trGuild(a) || '힣').localeCompare(trGuild(b) || '힣', 'ko') || bp(b) - bp(a)}[TRF.sort];
@@ -559,7 +569,7 @@ async function pageTrack(){
   const wl = [...new Set(CARDS.map(c => c.t.w))];
   const filtered = view.length !== CARDS.length;
   const list = `<section class="ov fr">${NODES}<div class="bar"><span class="sid g">추적 캐릭터 관리</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${filtered ? `${view.length} / ${CARDS.length}명` : `${CARDS.length}명`} · 줄을 누르면 아래에 상세 표시</span></div>
-    <div class="ctrls trf"><input class="q" data-in="tr-q" value="${esc(TRF.q)}" placeholder="캐릭터명 · 길드명 찾기">
+    <div class="ctrls trf"><input class="q" data-in="tr-q" value="${esc(TRF.q)}" placeholder="캐릭터명 · 길드명 · 메모 찾기">
       <span class="lbl">길드</span><select data-ch="tr-g"><option value="">전체 (${CARDS.length})</option>${gl.map(([g, n]) => `<option value="${esc(g)}" ${g === TRF.g ? 'selected' : ''}>${g === '-' ? '길드 없음' : esc(g)} (${n})</option>`).join('')}</select>
       ${wl.length > 1 ? `<span class="lbl">월드</span><select data-ch="tr-w"><option value="0">전체</option>${wl.map(w => `<option value="${w}" ${w === TRF.w ? 'selected' : ''}>${esc(wName(w))}</option>`).join('')}</select>` : ''}
       <span class="lbl">정렬</span><select data-ch="tr-sort">${[['add', '추가한 순'], ['bp', '전투력'], ['ml', '대표 마스터리'], ['sp', '전문화'], ['name', '캐릭터명'], ['guild', '길드명']].map(([v, l]) => `<option value="${v}" ${v === TRF.sort ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -573,7 +583,7 @@ async function pageTrack(){
     ${view.length ? '' : `<tr><td colspan="10" class="emptyrow">찾는 캐릭터가 없습니다 — 검색어나 길드 필터를 바꿔 보세요</td></tr>`}
     ${view.map((c, i) => { const r = c.r, lc = lastCh(c);
       return `<tr class="rkrow ${c === CARDS[sel] ? 'mine' : ''} ${TRCHK.has(c.k) ? 'chk' : ''}" data-act="trsel" data-k="${esc(c.k)}"><td class="chk"><button class="cb ${TRCHK.has(c.k) ? 'on' : ''}" data-act="tr-chk" data-k="${esc(c.k)}" title="선택">${TRCHK.has(c.k) ? '✓' : ''}</button></td><td class="no">${i + 1}</td>
-        <td class="l"><div class="nm">${esc(c.t.n)}</div><div class="sub">${esc(wName(c.t.w))} ${r ? serverLabel(r[C.s]) : ''}</div></td>
+        <td class="l"><div class="nm">${esc(c.t.n)}</div><div class="sub">${esc(wName(c.t.w))} ${r ? serverLabel(r[C.s]) : ''}</div>${c.t.memo ? `<div class="trmemo" title="${esc(c.t.memo)}">메모 · ${esc(c.t.memo.split('\n')[0])}</div>` : ''}</td>
         <td class="hide-s l">${esc(r ? (r[C.g] || '-') : '--')}</td>
         <td>${r ? `<span class="big" style="font-size:19px">${nf(r[C.ml])}</span><div class="sub">${esc(mname(mcode(r[C.mc])))}</div>` : '--'}</td>
         <td><span class="big" style="font-size:19px">${nf(r ? r[C.bp] : c.last?.bp)}</span>${delta(c.last?.bp, c.prev?.bp)}</td>
@@ -714,8 +724,7 @@ function rankRow(r, i){
   return `<tr class="rkrow ${isTracked(r) ? 'mine' : ''}" data-act="char" data-w="${r[C.w]}" data-n="${esc(r[C.n])}" id="rk-${i}">
     <td class="no ${t}">${i + 1}</td><td class="l"><div class="nm">${esc(r[C.n])}</div><div class="sub">${esc(wName(r[C.w]))} ${serverLabel(r[C.s])}</div></td>
     <td class="hide-s">${esc(jobName(r[C.j]))}</td>${main}<td class="dg" style="font-size:18px">${nf(r[C.sp])}</td><td class="hide-s dg" style="font-size:18px">${nf(r[C.ach])}</td><td class="hide-s l">${esc(r[C.g] || '-')}</td>
-    <td style="white-space:nowrap"><button class="star ${isFav(r[C.w], r[C.n]) ? 'on' : ''}" data-act="fav" data-w="${r[C.w]}" data-n="${esc(r[C.n])}" title="즐겨찾기">${isFav(r[C.w], r[C.n]) ? '★' : '☆'}</button>
-      ${isTracked(r) ? '<span class="sub">추적 중</span>' : `<button class="mini-btn" data-act="track" data-w="${r[C.w]}" data-n="${esc(r[C.n])}">+ 추적</button>`}</td></tr>`;
+    <td style="white-space:nowrap">      ${isTracked(r) ? '<span class="sub">추적 중</span>' : `<button class="mini-btn" data-act="track" data-w="${r[C.w]}" data-n="${esc(r[C.n])}">+ 추적</button>`}</td></tr>`;
 }
 async function rowOf(w, n){
   // 수집 데이터 → 바로 조회 기록 → (내 PC) 사이트 실시간 조회
@@ -732,19 +741,12 @@ async function rowOf(w, n){
   }
   return null;
 }
-const isFav = (w, n) => (ST.fav || []).some(f => f.w === Number(w) && f.n === n);
-function favOf(w, n){ return (ST.fav || []).find(f => f.w === Number(w) && f.n === n); }
-function toggleFav(w, n){
-  w = Number(w); ST.fav ||= [];
-  if(isFav(w, n)){ ST.fav = ST.fav.filter(f => !(f.w === w && f.n === n)); saveStore(); toast(`${n} 즐겨찾기 해제`); return false; }
-  ST.fav.push({w, n, memo: '', added: todayKST()}); saveStore(); toast(`${n} 즐겨찾기에 추가했습니다`); return true;
-}
 function kv(k, v, cls = ''){ return `<div class="k">${k}</div><div class="v ${cls}">${v}</div>`; }
 async function charDialog(w, n){
   w = Number(w);
   const got = await rowOf(w, n);
   if(!got){ toast(`${n}: 정보를 찾지 못했습니다`); return; }
-  const r = got.r, tracked = ST.tracked.some(t => t.w === w && t.n === n), fav = favOf(w, n);
+  const r = got.r, tm = ST.tracked.find(t => t.w === w && t.n === n), tracked = !!tm;
   const html = `<div class="kv">
       ${kv('월드', esc(wName(w)) + ' ' + serverLabel(r[C.s]))}${kv('직업', esc(jobName(r[C.j])))}${kv('길드', (r[C.g] ? `<a class="glink" data-act="guildgo" data-w="${w}" data-s="${r[C.s]}" data-g="${esc(r[C.g])}" title="길드원 보기">${esc(r[C.g])}</a>` : '--'))}
       ${kv('대표 마스터리', `${esc(mname(mcode(r[C.mc])))} <b class="dg">${nf(r[C.ml])}</b>`)}
@@ -752,10 +754,9 @@ async function charDialog(w, n){
       ${kv('마스터리 랭크', '#' + nf(r[C.mr]), 'dg')}${kv('전투력', nf(r[C.bp]), 'dg')}
       ${kv('전투력 순위', `월드 <b class="dg">#${nf(r[C.bwr])}</b> · 서버 <b class="dg">#${nf(r[C.bsr])}</b>`)}
       ${kv('업적점수', nf(r[C.ach]), 'dg')}${kv('전문화', nf(r[C.sp]), 'dg')}</div>
-    ${fav ? `<div class="f" style="margin:14px 0 0"><label>즐겨찾기 메모</label><textarea class="memo" data-memo="${esc(key(w, n))}" rows="3" placeholder="메모 입력 (자동 저장)">${esc(fav.memo || '')}</textarea></div>` : ''}`;
+    ${tm ? `<div class="f" style="margin:14px 0 0"><label>추적 메모</label><textarea class="memo" data-memo="${esc(key(w, n))}" rows="3" placeholder="메모 입력 (자동 저장)">${esc(tm.memo || '')}</textarea></div>` : ''}`;
   showDlg(`<b class="cname">${esc(n)}</b> <small>${esc(got.date || '')} 기준</small>`, html, [
     {id:'main', label:'캐릭터에서 보기', run:() => { $('#dlgAdd').open && $('#dlgAdd').close(); setCur(w, n); if(route() !== 'my') location.hash = '#my'; else render(); }},
-    {id:'fav', label: fav ? '★ 즐겨찾기 해제' : '☆ 즐겨찾기', run: () => { toggleFav(w, n); render(); charDialog(w, n); }},
     tracked ? {id:'go', label:'추적에서 보기', pri:true, run:() => { TRSEL = key(w, n); lsSet('l9trsel', TRSEL); location.hash = '#track'; }}
             : {id:'add', label:'+ 추적 추가', pri:true, run:() => { $('#dlgAdd').open && $('#dlgAdd').close(); track(w, n); }}], true);
 }
@@ -873,7 +874,7 @@ async function pageGuild(){
       <td><span class="big" style="font-size:19px">${nf(r[C.ml])}</span><div class="sub">${esc(mname(mcode(r[C.mc])))}</div></td>
       <td><span class="big" style="font-size:19px">${nf(r[C.bp])}</span></td><td class="hide-s dg" style="font-size:17px">#${nf(r[C.bsr])}</td>
       <td class="hide-s dg" style="font-size:17px">${nf(r[C.ach])}</td><td class="hide-s dg" style="font-size:17px">${nf(r[C.sp])}</td>
-      <td class="act"><button class="star ${isFav(r[C.w], r[C.n]) ? 'on' : ''}" data-act="fav" data-w="${r[C.w]}" data-n="${esc(r[C.n])}" title="즐겨찾기">${isFav(r[C.w], r[C.n]) ? '★' : '☆'}</button>
+      <td class="act">
         ${isTracked(r) ? '<span class="sub">추적 중</span>' : `<button class="mini-btn" data-act="track" data-w="${r[C.w]}" data-n="${esc(r[C.n])}">+ 추적</button>`}</td></tr>`).join('')}
     </table></div></section>`;
   return h;
@@ -893,8 +894,7 @@ function ckFromTo(k, a, b){
 function chgTrackBtn(w, n, seen){
   if(!seen) return '<span class="sub">수집 기준 밖</span>';
   const t = ST.tracked.some(x => x.w === w && x.n === n);
-  return `<button class="star ${isFav(w, n) ? 'on' : ''}" data-act="fav" data-w="${w}" data-n="${esc(n)}" title="즐겨찾기">${isFav(w, n) ? '★' : '☆'}</button>`
-    + (t ? '<span class="sub">추적 중</span>' : `<button class="mini-btn" data-act="track" data-w="${w}" data-n="${esc(n)}">+ 추적</button>`);
+  return (t ? '<span class="sub">추적 중</span>' : `<button class="mini-btn" data-act="track" data-w="${w}" data-n="${esc(n)}">+ 추적</button>`);
 }
 async function pageChg(){
   if(!readyWorlds().length) return noData();
@@ -980,14 +980,13 @@ function pageHelp(){
       <li>일별 기록 · 변경 이력은 최근 45일까지 보관합니다.</li></ul>`)
   + sec('메뉴', `
     <dl class="hdl">
-      <dt>캐릭터</dt><dd>[검색]으로 찾은 캐릭터 1명의 정보 — 전투력 · 업적 · 마스터리 · 전문화 일별 그래프, 마스터리 11종 입력, 통합 레벨, 변경 내역. [화면 초기화]로 표시 중인 캐릭터와 최근 본 캐릭터를 지웁니다(추적 · 즐겨찾기는 그대로).</dd>
+      <dt>캐릭터</dt><dd>[검색]으로 찾은 캐릭터 1명의 정보 — 전투력 · 업적 · 마스터리 · 전문화 일별 그래프, 마스터리 11종 입력, 통합 레벨, 변경 내역. [화면 초기화]로 표시 중인 캐릭터와 최근 본 캐릭터를 지웁니다(추적 · 메모는 그대로).</dd>
       <dt>길드</dt><dd>길드명으로 찾기 → 월드 · 서버별 길드 목록. 길드원 수, 신규 가입 · 탈퇴(7일/30일/전체), 평균 전투력 · 마스터리 · 전문화, 직업 구성, 길드원 표, [+ 길드원 모두 추적].</dd>
       <dt>랭킹</dt><dd>대표 마스터리 또는 전투력 순위 — 전체 월드 / 월드 / 서버, 직업 필터, 닉네임 · 길드 찾기. 전문화 레벨도 함께 표시합니다.</dd>
       <dt>TOP 20</dt><dd>대표 마스터리 TOP 20과 전투력 TOP 20.</dd>
       <dt>통계</dt><dd>캐릭터 수 · 평균 · 최고, 전투력 · 마스터리 · 전문화 분포, 직업 · 무기 통계, 서버별 비교, 순위 컷.</dd>
       <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다.</dd>
       <dt>경험치 계산기</dt><dd>사냥 결과 창 캡처를 끌어다 놓거나 Ctrl+V로 붙여넣으면 사냥터 · 사냥 시간 · M 경험치를 읽어 1분당 · 1시간당 경험치를 기록하고, 가장 효율 좋은 사냥터를 ★로 표시합니다. 사냥터 이름 앞뒤에 잘못 읽힌 글자는 자동으로 떼어냅니다. 잘못 읽은 기록은 [수정]으로 고칠 수 있습니다.</dd>
-      <dt>즐겨찾기</dt><dd>☆로 즐겨찾기한 캐릭터의 현재 정보와 메모.</dd>
       <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
     </dl>`)
   + sec('캐릭터 추적 방식 (닉네임 변경 · 월드 · 서버 이전)', `
@@ -998,35 +997,15 @@ function pageHelp(){
       <tr><td>마스터리 3종</td><td>무기 3개 레벨이 각각 그대로이거나 1 이내로 오름</td></tr>
       <tr><td>전문화</td><td>줄지 않고 2~3 이내로 오름</td></tr>
       <tr><td>전투력</td><td>−5% ~ +10%</td></tr></table>
-    <ul><li><b>확실</b>: 위 항목이 모두 맞는 캐릭터가 <b>한 명뿐</b>일 때(또는 같은 서버 · 같은 길드에서 닉네임만 바뀐 경우) 같은 캐릭터로 이어 붙입니다. 이름 · 월드 · 서버가 모두 바뀌어도 찾습니다. 추적 · 즐겨찾기 · 메모도 새 이름으로 자동으로 옮겨집니다.</li>
+    <ul><li><b>확실</b>: 위 항목이 모두 맞는 캐릭터가 <b>한 명뿐</b>일 때(또는 같은 서버 · 같은 길드에서 닉네임만 바뀐 경우) 같은 캐릭터로 이어 붙입니다. 이름 · 월드 · 서버가 모두 바뀌어도 찾습니다. 추적 · 메모도 새 이름으로 자동으로 옮겨집니다.</li>
       <li><b>유력</b>: 맞는 후보가 여럿이거나 일부 값이 조금 다를 때는 단정하지 않고 [변경 이력]에 유력으로만 표시합니다. 추적 중인 캐릭터라면 [추적] 화면에 후보가 나오고 [이 캐릭터로 바꾸기]로 직접 옮길 수 있습니다.</li>
       <li>사라진 뒤 <b>7일 안</b>에 다시 나타나면 이어 붙입니다. 옮긴 곳에서 수집 기준(구월드 14만 · 신월드 500위) 밖이면 기준 안으로 들어온 날 찾습니다.</li></ul>`)
   + sec('알아둘 점', `
-    <ul><li>추적 · 즐겨찾기 · 메모 · 마스터리 입력 · 경험치 기록은 <b>이 브라우저에만</b> 저장됩니다. 다른 기기로 옮기려면 [캐릭터] · [추적] 아래 [백업 저장] / [백업 불러오기]를 쓰세요.</li>
+    <ul><li>추적 · 메모 · 마스터리 입력 · 경험치 기록은 <b>이 브라우저에만</b> 저장됩니다. 다른 기기로 옮기려면 [캐릭터] · [추적] 아래 [백업 저장] / [백업 불러오기]를 쓰세요.</li>
       <li>같은 월드 안 닉네임 변경은 직업 · 업적점수 · 길드 · 서버가 거의 같을 때만 자동으로 연결합니다(잘못 연결 방지). 못 따라가면 [추적]의 [닉네임/월드]로 직접 바꾸세요.</li>
       <li>공식 공개 API가 아니라 공식 사이트가 쓰는 데이터를 이용합니다. 공식 사이트가 바뀌면 수정이 필요할 수 있습니다.</li>
       <li>버전 ${VERSION}</li></ul>`)
   + `</div>`;
-}
-
-/* ============================================================ 즐겨찾기 */
-async function pageFav(){
-  const fs = ST.fav || [];
-  if(!fs.length) return blank('즐겨찾기한 캐릭터가 없습니다', '[검색] · 랭킹 · TOP 20에서 캐릭터를 누르고 [☆ 즐겨찾기]를 누르세요');
-  const rows = [];
-  for(const f of fs) rows.push([f, (await rowOf(f.w, f.n))?.r || null]);
-  return `<section class="ov fr">${NODES}
-    <div class="bar"><span class="sid g">즐겨찾기</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${fs.length}명 · 메모는 입력하면 바로 저장됩니다</span></div>
-    <div class="tbl" style="margin:0;border:0"><table class="rk favt"><tr><th></th><th class="l">캐릭터</th><th class="hide-s">직업</th><th>대표 마스터리</th><th>전투력</th><th class="hide-s l">길드</th><th class="l">메모</th><th></th></tr>
-    ${rows.map(([f, r]) => { const tr = ST.tracked.some(t => t.w === f.w && t.n === f.n);
-      return `<tr><td><button class="star on" data-act="fav" data-w="${f.w}" data-n="${esc(f.n)}" title="즐겨찾기 해제">★</button></td>
-      <td class="l"><a class="nmlink" data-act="char" data-w="${f.w}" data-n="${esc(f.n)}"><span class="nm">${esc(f.n)}</span></a><div class="sub">${esc(wName(f.w))} ${r ? serverLabel(r[C.s]) : ''}</div></td>
-      <td class="hide-s">${r ? esc(jobName(r[C.j])) : '--'}</td>
-      <td>${r ? `<span class="big">${nf(r[C.ml])}</span><div class="sub">${esc(mname(mcode(r[C.mc])))}</div>` : '<span class="sub">검색 안 됨</span>'}</td>
-      <td>${r ? `<span class="big">${nf(r[C.bp])}</span>` : '--'}</td><td class="hide-s l">${r ? esc(r[C.g] || '-') : '--'}</td>
-      <td class="l"><input class="memo1" data-memo="${esc(key(f.w, f.n))}" value="${esc(f.memo || '')}" placeholder="메모 입력"></td>
-      <td>${tr ? '<span class="sub">추적 중</span>' : `<button class="mini-btn" data-act="track" data-w="${f.w}" data-n="${esc(f.n)}">+ 추적</button>`}</td></tr>`; }).join('')}
-    </table></div></section>`;
 }
 
 /* ============================================================ TOP 20 */
@@ -1155,7 +1134,15 @@ function expTrend(k){
   return `<svg class="osc" viewBox="0 0 ${W} ${H}" role="img"><rect x="${L}" y="${T}" width="${R - L}" height="${B - T}" fill="rgba(var(--c),.03)" stroke="rgba(var(--c),.35)"/>${g}${bars}</svg>
     <div class="legend">${places.map((p, i) => `<span><i style="background:${PAL[i % PAL.length]}"></i>${esc(p)}${p === best ? ' ★' : ''}</span>`).join('')}</div>`;
 }
+// 예전에 잘못 읽힌 사냥터 이름('심연 1층')을 알려진 이름('태고의 심연 1층')으로 고침
+function fixExpPlaces(){
+  let ch = false;
+  for(const r of expRecs()){ const b = basePlace(r.place), v = cleanPlace(b);
+    if(v !== b && PLACES.includes(v)){ r.place = v + r.place.slice(b.length); ch = true; } }
+  if(ch) saveStore();
+}
 function pageExp(){
+  fixExpPlaces();
   const {places, best} = expStats();
   const rs = expRecs().slice().sort((a, b) => a.at < b.at ? 1 : -1);
   const e = EX.edit ? expRecs().find(r => r.id === EX.edit) : null;
@@ -1257,13 +1244,30 @@ function cleanPlace(p){
   while(parts.length > 1 && parts[0].length === 1 && parts.slice(1).join('').length >= 2) parts.shift();
   while(parts.length > 1 && parts[parts.length - 1].length === 1 && !/[가-힣]/.test(parts[parts.length - 1])) parts.pop();
   t = parts.join(' ').replace(/^[^가-힣A-Za-z]+/, '').trim();
-  const known = [...new Set(expRecs().map(r => basePlace(r.place)))].filter(x => x && x !== '알 수 없는 사냥터').sort((a, b) => b.length - a.length);
-  for(const k of known){
-    if(t === k) return k;
-    if(t.endsWith(k) && t.length - k.length <= 3) return k;
-    if(t.replace(/\s/g, '') === k.replace(/\s/g, '')) return k;
-  }
+  t = t.replace(/(\d)\s*[충총증]$/, '$1층').replace(/(\d)\s*[충총증](\s)/, '$1층$2');   // '1충' → '1층' (자주 틀리는 글자)
+  const sp = x => x.replace(/\s/g, '');
+  const T = sp(t);
+  const known = [...new Set(expRecs().map(r => basePlace(r.place)).concat(PLACES))].filter(x => x && x !== '알 수 없는 사냥터').sort((a, b) => b.length - a.length);
+  for(const k of PLACES){ if(T === sp(k)) return k; }
+  if(T.length >= 3){ const l = PLACES.filter(k => sp(k).endsWith(T)); if(l.length === 1) return l[0]; }   // 알려진 이름의 뒷부분만 읽힘
+  for(const k of known){ if(T === sp(k)) return k; }                                      // 띄어쓰기만 다름
+  for(const k of known){ if(T.endsWith(sp(k)) && T.length - sp(k).length <= 3) return k; }  // 앞에 잡글자
+  // 앞부분을 못 읽음 ('심연 1층' → '태고의 심연 1층'): 그렇게 끝나는 사냥터가 하나뿐일 때만
+  if(T.length >= 3){ const l = PLACES.concat(known).filter((k, i, a) => a.indexOf(k) === i && sp(k).endsWith(T) && sp(k) !== T); if(l.length === 1) return l[0]; }
+  for(const k of known){ if(T.length >= 4 && lev(T, sp(k)) <= 1) return k; }               // 한 글자 틀림
   return t;
+}
+// 알려진 사냥터 이름 (캡처에서 일부만 읽혔을 때 맞춰 줌). 기록한 사냥터 이름도 함께 씀
+const PLACES = ['태고의 심연 1층', '태고의 심연 2층', '에르바노크', '그림자 숲'];
+function lev(a, b){ const m = a.length, n = b.length; if(Math.abs(m - n) > 1) return 9; const d = Array.from({length: m + 1}, (_, i) => [i]); for(let j = 1; j <= n; j++) d[0][j] = j;
+  for(let i = 1; i <= m; i++) for(let j = 1; j <= n; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[m][n]; }
+// 두 번 읽은 결과 중 더 나은 사냥터 이름: 알려진 이름과 맞는 쪽 → 한글이 더 많은 쪽
+function bestPlace(list){
+  const c = list.filter(Boolean).map(x => ({raw: x, v: cleanPlace(x)}));
+  if(!c.length) return '';
+  const known = new Set(PLACES.concat(expRecs().map(r => basePlace(r.place))));
+  const hit = c.filter(x => known.has(x.v)); if(hit.length) return hit.sort((a, b) => b.v.length - a.v.length)[0].v;
+  return c.sort((a, b) => (b.v.match(/[가-힣]/g) || []).length - (a.v.match(/[가-힣]/g) || []).length)[0].v;
 }
 const basePlace = p => String(p || '').replace(/-\d+$/, '');
 function uniqPlace(p){
@@ -1289,8 +1293,10 @@ async function addShots(files){
   try{ w = await loadTess(); }catch(e){ items.forEach(s => { s.state = '읽기 실패 — 직접 입력'; s.fail = true; }); toast(e.message); render(); return; }
   for(const s of items){
     try{
-      let p = parseExpText((await w.recognize(s.file)).data.text);
-      if(!p.exp || !p.secs) p = Object.assign(p, Object.fromEntries(Object.entries(parseExpText((await w.recognize(await scaled(s.file, 2))).data.text)).filter(([k, v]) => v && !p[k])));
+      // 원본과 2배 확대본을 모두 읽어서 더 정확한 쪽을 씀 (사냥터 이름 앞부분이 빠지는 경우 대비)
+      const p1 = parseExpText((await w.recognize(s.file)).data.text);
+      const p2 = parseExpText((await w.recognize(await scaled(s.file, 2))).data.text);
+      const p = {exp: p1.exp || p2.exp, secs: p1.secs || p2.secs, place: bestPlace([p1.place, p2.place])};
       if(p.exp && p.secs){
         const r = addRec(p.place, p.exp, p.secs);
         s.ok = true; s.state = `${r.place} · 시간당 ${krShort(p.exp / p.secs * 3600)}`;
@@ -1326,7 +1332,7 @@ function noData(){
   if(D.local) return blank('랭킹 · 통계 데이터가 아직 없습니다', `[갱신하기]를 누르면 전체 캐릭터 수집을 시작합니다. 월드 하나가 끝날 때마다 (약 15~25분) 바로 표시됩니다${c?.msg ? '<br>' + esc(c.msg) : ''}`);
   return blank('아직 수집된 데이터가 없습니다', '첫 수집이 끝나면 표시됩니다. 매일 12시쯤 자동으로 수집합니다');
 }
-function route(){ const r = (location.hash || '#my').slice(1); return ['my', 'guild', 'rank', 'top', 'stats', 'chg', 'exp', 'fav', 'track', 'help'].includes(r) ? r : 'my'; }
+function route(){ const r = (location.hash || '#my').slice(1); return ['my', 'guild', 'rank', 'top', 'stats', 'chg', 'exp', 'track', 'help'].includes(r) ? r : r === 'fav' ? 'track' : 'my'; }
 let RENDERING = null;
 async function render(){
   if(RENDERING){ RENDERING.again = true; return RENDERING.p; }
@@ -1341,7 +1347,7 @@ async function render(){
       renderStatus(); renderTicker();
       let html = '';
       try{
-        html = r === 'rank' ? await pageRank() : r === 'top' ? await pageTop() : r === 'stats' ? await pageStats() : r === 'exp' ? pageExp() : r === 'fav' ? await pageFav() : r === 'track' ? await pageTrack() : r === 'guild' ? await pageGuild() : r === 'chg' ? await pageChg() : r === 'help' ? pageHelp() : await pageMy();
+        html = r === 'rank' ? await pageRank() : r === 'top' ? await pageTop() : r === 'stats' ? await pageStats() : r === 'exp' ? pageExp() : r === 'track' ? await pageTrack() : r === 'guild' ? await pageGuild() : r === 'chg' ? await pageChg() : r === 'help' ? pageHelp() : await pageMy();
       }catch(e){ html = blank('불러오기 오류', esc(e.message || e)); }
       const focus = document.activeElement?.dataset?.in;
       const pos = focus ? document.activeElement.selectionStart : 0;
@@ -1647,7 +1653,7 @@ document.addEventListener('click', async ev => {
     else if(act === 'sc-scope'){ SC.scope = b.dataset.v; saveSC(); RK.page = 0; render(); }
     else if(act === 'rk-by'){ RK.by = b.dataset.v; RK.page = 0; lsSet('l9rank', JSON.stringify({by: RK.by})); render(); }
     else if(act === 'top-tab'){ TOPTAB = b.dataset.v; lsSet('l9toptab', TOPTAB); await render(); }
-    else if(act === 'my-reset'){ ST.cur = null; ST.recent = []; saveSession(); await render(); window.scrollTo({top: 0}); toast('캐릭터 화면을 초기화했습니다 (추적 · 즐겨찾기는 그대로)'); }
+    else if(act === 'my-reset'){ ST.cur = null; ST.recent = []; saveSession(); await render(); window.scrollTo({top: 0}); toast('캐릭터 화면을 초기화했습니다 (추적 · 메모는 그대로)'); }
     else if(act === 'cg-per'){ CG.per = Number(b.dataset.v); CG.page = 0; CG.mv = 24; saveCG(); await render(); }
     else if(act === 'cg-cf'){ CG.cf = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-kind'){ CG.kind = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
@@ -1657,7 +1663,6 @@ document.addEventListener('click', async ev => {
     else if(act === 'rk-goto'){ const i = Number(b.dataset.i); RK.q = ''; RK.page = Math.floor(i / PAGE); await render(); document.getElementById('rk-' + i)?.scrollIntoView({block:'center'}); }
     else if(act === 'track'){ ev.stopPropagation(); track(b.dataset.w, b.dataset.n); }
     else if(act === 'char') charDialog(Number(b.dataset.w), b.dataset.n);
-    else if(act === 'fav'){ ev.stopPropagation(); toggleFav(b.dataset.w, b.dataset.n); render(); }
     else if(act === 'g-find'){ GS.q = ($('#gq')?.value || '').trim(); GS.sel = null; const hs = GS.q ? await findGuilds(GS.q) : []; if(hs.length === 1) GS.sel = hs[0].k; saveGS(); await render(); if(GS.sel) $('#gdetail')?.scrollIntoView({behavior:'smooth', block:'start'}); }
     else if(act === 'g-open'){ GS.sel = k; saveGS(); await render(); $('#gdetail')?.scrollIntoView({behavior:'smooth', block:'start'}); }
     else if(act === 'g-reset'){ GS.q = ''; GS.sel = null; saveGS(); await render(); $('#gq')?.focus(); }
@@ -1674,7 +1679,7 @@ document.addEventListener('click', async ev => {
     else if(act === 'guildgo'){ ev.preventDefault(); if($('#dlgR').open) $('#dlgR').close(); GS.q = b.dataset.g; openGuild(gkey(b.dataset.w, b.dataset.s, b.dataset.g)); }
     else if(act === 'setcur'){ setCur(b.dataset.w, b.dataset.n); await render(); window.scrollTo({top: 0}); }
     else if(act === 'tr-chk'){ TRCHK.has(k) ? TRCHK.delete(k) : TRCHK.add(k); render(); }
-    else if(act === 'mv-apply'){ if(!confirm(`${b.dataset.on} → ${b.dataset.n} (${wName(b.dataset.w)}) 로 바꿀까요?\n추적 · 즐겨찾기 · 메모 · 입력한 마스터리가 함께 옮겨집니다.`)) return; applyMove(b.dataset.ow, b.dataset.on, b.dataset.w, b.dataset.n); toast('바꿨습니다'); await render(); }
+    else if(act === 'mv-apply'){ if(!confirm(`${b.dataset.on} → ${b.dataset.n} (${wName(b.dataset.w)}) 로 바꿀까요?\n추적 · 메모 · 입력한 마스터리가 함께 옮겨집니다.`)) return; applyMove(b.dataset.ow, b.dataset.on, b.dataset.w, b.dataset.n); toast('바꿨습니다'); await render(); }
     else if(act === 'tr-freset'){ Object.assign(TRF, {q: '', g: '', w: 0}); saveTRF(); render(); }
     else if(act === 'tr-chkall'){ const all = TRVIEW.keys.length ? TRVIEW.keys : ST.tracked.map(t => key(t.w, t.n)); if(all.every(x => TRCHK.has(x))) TRCHK.clear(); else all.forEach(x => TRCHK.add(x)); render(); }
     else if(act === 'tr-chknone'){ TRCHK.clear(); render(); }
@@ -1739,7 +1744,7 @@ document.addEventListener('input', e => {
   if(e.target.dataset?.in === 'cg-q'){ CG.q = e.target.value; CG.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.dataset?.in === 'rk-q'){ RK.q = e.target.value; RK.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   const mk = e.target.dataset?.memo;
-  if(mk){ const f = (ST.fav || []).find(x => key(x.w, x.n) === mk); if(f){ f.memo = e.target.value; clearTimeout(MT); MT = setTimeout(saveStore, 300); } }
+  if(mk){ const t = ST.tracked.find(x => key(x.w, x.n) === mk); if(t){ t.memo = e.target.value; document.querySelectorAll(`[data-memo="${CSS.escape(mk)}"]`).forEach(x => { if(x !== e.target) x.value = t.memo; }); clearTimeout(MT); MT = setTimeout(saveStore, 300); } }
 });
 let MT = null;
 document.addEventListener('keydown', e => {
@@ -1767,7 +1772,7 @@ $('#fileBackup').addEventListener('change', async e => {
     const j = JSON.parse(await f.text());
     if(!j || j.v !== 1 || !Array.isArray(j.tracked)) throw new Error('백업 파일 형식이 아닙니다');
     if(!confirm(`백업을 불러오면 지금 기록(추적 ${ST.tracked.length}명)을 바꿉니다. 계속할까요?`)) return;
-    ST = Object.assign(freshStore(), j); loadSession(); saveStore(); await render(); toast(`백업을 불러왔습니다 (추적 ${ST.tracked.length}명)`);
+    ST = Object.assign(freshStore(), j); migrateFav(); loadSession(); saveStore(); await render(); toast(`백업을 불러왔습니다 (추적 ${ST.tracked.length}명)`);
   }catch(err){ toast('불러오기 실패: ' + err.message); }
 });
 // 대화상자 버튼
@@ -1838,7 +1843,8 @@ async function importLegacy(){
     try{
       const j = await localApi('api/store');
       if(j.store && j.store.v === 1){ ST = Object.assign(freshStore(), j.store); }
-      else if(ST.tracked.length || (ST.fav || []).length || (ST.expr || []).length) syncPush({store: persisted()});
+      else if(ST.tracked.length || (ST.expr || []).length) syncPush({store: persisted()});
+      if(migrateFav()) saveStore();
       for(const [k, v] of Object.entries(j.prefs || {})){ try{ localStorage.setItem(k, v); }catch(e){} }
       SYNC.on = true;
       if(!j.prefs) syncPush({prefs: prefsNow()});
