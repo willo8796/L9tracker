@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -881,8 +881,8 @@ async function pageGuild(){
 }
 
 /* ============================================================ 변경 이력 */
-const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0}, x || {}, {page: 0, mv: 24}); })();
-function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf})); }catch(e){} }
+const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0, sort: 'd', dir: -1}, x || {}, {page: 0, mv: 24}); })();
+function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf, sort: CG.sort, dir: CG.dir})); }catch(e){} }
 function cfBadge(c, n, sc){ return c === 1 ? '<span class="cfb c1" title="이 캐릭터로 확실히 이어 붙였습니다">확실</span>' : c === 2 ? `<span class="cfb c2" title="비슷한 캐릭터 — 확실하지 않아 이어 붙이지 않았습니다">유력${n > 1 ? ` · 후보 ${n}명` : ''}</span>` : ''; }
 const CK = ['닉네임 변경', '길드 변경', '월드 이전', '서버 이전'];
 async function changes(){ if(!D.chg) D.chg = getJSON('data/changes.json').catch(() => null); return D.chg; }
@@ -911,6 +911,8 @@ async function oldNameNote(q, ch, wf){
   }
   return `<div class="oldnote"><div class="sub">찾는 이름이 <b>다른 캐릭터의 예전 닉네임</b>이기도 합니다 — 같은 이름이라도 지금 그 이름을 쓰는 캐릭터와 다른 캐릭터일 수 있습니다</div>${out.join('')}</div>`;
 }
+const CGSORT = [['d', '날짜'], ['kind', '종류'], ['name', '캐릭터명'], ['world', '월드'], ['server', '서버'], ['bp', '전투력'], ['ml', '대표 마스터리'], ['sp', '전문화']];
+const CGDIR0 = {d: -1, kind: 1, name: 1, world: 1, server: 1, bp: -1, ml: -1, sp: -1};   // 처음 고를 때 방향
 async function pageChg(){
   if(!readyWorlds().length) return noData();
   const ch = await changes();
@@ -919,6 +921,7 @@ async function pageChg(){
   if(!ch) return h + `<div class="note">변경 이력은 v0.9.0 이후 첫 자동 수집부터 기록됩니다. 전날 수집 결과와 비교하므로 이틀 이상 수집되면 표시됩니다.</div></section>`;
   const today = ch.date, per = CG.per;
   const amap = new Map((ch.assoc || []).map(a => [a.d + '|' + key(a.w, a.n), a]));
+  const th = (k, l, cls = '') => `<th class="${cls} sortable ${CG.sort === k ? 'on' : ''}" data-act="cg-sorth" data-v="${k}" title="눌러서 정렬">${l}${CG.sort === k ? (CG.dir < 0 ? ' ▼' : ' ▲') : ''}</th>`;
   const assocOf = x => x[1] === 0 ? amap.get(x[0] + '|' + key(x[2], x[4])) : null;
   const inP = d => per >= 999 || d > today - per;
   const q = CG.q.trim();
@@ -933,6 +936,19 @@ async function pageChg(){
   const cnt = [0, 0, 0, 0]; let lk = 0; for(const x of base){ if(x[12] === 2) lk++; else cnt[x[1]]++; }
   let view = base.filter(x => (CG.kind < 0 || x[1] === CG.kind) && (!CG.cf || x[12] === CG.cf));
   if(q) view = view.filter(qm);
+  // 예전 수집기로 만든 기록에는 전문화 · 업적점수가 없어서 지금 수집 데이터로 채움
+  if(view.some(x => x[15] === undefined)){
+    const rows = new Map(); for(const j of await allWorlds()) for(const r of j.rows) rows.set(key(r[C.w], r[C.n]), r);
+    for(const x of ch.list){ if(x[15] !== undefined) continue; const r = rows.get(key(x[2], x[4])); x[15] = r ? r[C.sp] : null; x[16] = r ? r[C.ach] : null; if(r && x[9] == null){ x[9] = r[C.ml]; x[10] = mcode(r[C.mc]); } }
+  }
+  const SV = {d: x => x[0], kind: x => x[1], name: x => x[4], world: x => wName(x[2]), server: x => x[3] || 0, bp: x => x[8], ml: x => x[9], sp: x => x[15]};
+  const sv = SV[CG.sort] || SV.d, dir = CG.dir || -1;
+  view = view.map((x, i) => [x, i]).sort(([a, i], [b, j]) => {
+    const va = sv(a), vb = sv(b);
+    if(va == null && vb == null) return i - j; if(va == null) return 1; if(vb == null) return -1;
+    const c = typeof va === 'string' ? va.localeCompare(vb, 'ko') : va - vb;
+    return c ? c * dir : (b[0] - a[0]) || i - j;
+  }).map(([x]) => x);
   const pages = Math.max(1, Math.ceil(view.length / PAGE)); CG.page = Math.min(CG.page, pages - 1);
   const slice = view.slice(CG.page * PAGE, CG.page * PAGE + PAGE);
   const ws = readyWorlds();
@@ -946,17 +962,20 @@ async function pageChg(){
       <span class="lbl">확실도</span>${seg('cg-cf', CG.cf, [[0, '전체'], [1, '확실'], [2, '유력']])}
       <span class="lbl">월드</span><select data-ch="cg-w"><option value="0">전체</option>${ws.map(w => `<option value="${w.code}" ${w.code === CG.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>
       <span class="lbl">서버</span><select data-ch="cg-s" ${CG.w ? '' : 'disabled title="월드를 먼저 고르세요"'}><option value="0">전체</option>${svs.map(v => `<option value="${v}" ${v === CG.s ? 'selected' : ''}>${serverLabel(v)}</option>`).join('')}</select>
+      <span class="lbl">정렬</span><select data-ch="cg-sort">${CGSORT.map(([v, l]) => `<option value="${v}" ${v === CG.sort ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button class="btn cgdir" data-act="cg-dir" title="오름차순 / 내림차순 바꾸기">${dir < 0 ? '내림차순 ▼' : '오름차순 ▲'}</button>
       <span class="sp"></span><input class="q" data-in="cg-q" value="${esc(CG.q)}" placeholder="닉네임(이전 닉네임 포함) · 길드 찾기"></div>
     ${q ? await oldNameNote(q, ch, CG.w) : ''}
-    <div class="sec" id="cglist">변경 목록 <small>${nf(view.length)}건 · 최근 순 · 줄을 누르면 캐릭터 정보</small></div>
-    <div class="tbl" style="margin:0;border:0"><table class="rk chg"><tr><th class="cgd">날짜</th><th>종류</th><th class="l">캐릭터 (현재)</th><th class="l">이전 → 이후</th><th class="l hide-s">현재 길드</th><th>전투력</th><th class="hide-s">대표 마스터리</th><th>전문화</th><th class="hide-s">업적점수</th><th></th></tr>
+    <div class="sec" id="cglist">변경 목록 <small>${nf(view.length)}건 · ${esc((CGSORT.find(x => x[0] === CG.sort) || CGSORT[0])[1])} ${dir < 0 ? '내림차순' : '오름차순'} · 표 제목을 눌러도 정렬 · 줄을 누르면 캐릭터 정보</small></div>
+    <div class="tbl" style="margin:0;border:0"><table class="rk chg"><tr>${th('d', '날짜', 'cgd')}${th('kind', '종류')}${th('name', '캐릭터 (현재)', 'l')}${th('world', '월드', 'cgws')}${th('server', '서버', 'cgws')}<th class="l">이전 → 이후</th><th class="l hide-s">현재 길드</th>${th('bp', '전투력')}${th('ml', '대표 마스터리', 'hide-s')}${th('sp', '전문화')}<th class="hide-s">업적점수</th><th></th></tr>
     ${slice.map(x => `<tr class="${x[11] ? 'rkrow' : ''}" ${x[11] ? `data-act="char" data-w="${x[2]}" data-n="${esc(x[4])}"` : ''}>
       <td class="dg cgd" style="font-size:16px">${esc(dayStr(x[0]).slice(5))}</td><td><span class="mdate dg">${esc(dayStr(x[0]).slice(5))}</span>${ckBadge(x[1])}${cfBadge(x[12], x[13], x[14])}</td>
-      <td class="l"><div class="nm">${esc(x[4])}</div><div class="sub">${esc(wName(x[2]))} ${serverLabel(x[3])}</div>${(() => { const o = oldNames(x[2], x[4]).filter(v => v !== x[5] || x[1] !== 0); return o.length ? `<div class="oldnm">이전 닉네임 · ${o.map(v => `<span class="${q && v.includes(q) ? 'hit' : ''}">${esc(v)}</span>`).join(', ')}</div>` : ''; })()}${assocOf(x) ? `<div class="sub"><span class="cfb c3">연관 추정 ${assocOf(x).rel.length}</span></div>` : ''}</td>
+      <td class="l"><div class="nm">${esc(x[4])}</div><div class="sub msub">${esc(wName(x[2]))} ${serverLabel(x[3])}</div>${(() => { const o = oldNames(x[2], x[4]).filter(v => v !== x[5] || x[1] !== 0); return o.length ? `<div class="oldnm">이전 닉네임 · ${o.map(v => `<span class="${q && v.includes(q) ? 'hit' : ''}">${esc(v)}</span>`).join(', ')}</div>` : ''; })()}${assocOf(x) ? `<div class="sub"><span class="cfb c3">연관 추정 ${assocOf(x).rel.length}</span></div>` : ''}</td>
+      <td class="cgws">${esc(wName(x[2]))}</td><td class="cgws dg" style="font-size:16px">${x[3] ? pad2(x[3]) : '--'}</td>
       <td class="l nh">${ckFromTo(x[1], x[5], x[6])}</td><td class="l hide-s">${x[7] ? esc(x[7]) : '<span class="sub">-</span>'}</td>
       <td><span class="big" style="font-size:18px">${nf(x[8])}</span></td><td class="hide-s"><span class="dg" style="font-size:17px">${nf(x[9])}</span><div class="sub">${esc(mname(x[10]))}</div></td>
       <td><span class="dg" style="font-size:17px">${nf(x[15])}</span></td><td class="hide-s"><span class="dg" style="font-size:17px">${nf(x[16])}</span></td>
-      <td style="white-space:nowrap">${chgTrackBtn(x[2], x[4], x[11])}</td></tr>`).join('') || '<tr><td colspan="10" class="emptyrow">이 기간에 기록된 변경이 없습니다</td></tr>'}
+      <td style="white-space:nowrap">${chgTrackBtn(x[2], x[4], x[11])}</td></tr>`).join('') || '<tr><td colspan="12" class="emptyrow">이 기간에 기록된 변경이 없습니다</td></tr>'}
     </table></div>
     ${pages > 1 ? `<div class="pager"><button class="btn" data-act="cg-page" data-p="0" ${CG.page ? '' : 'disabled'}>처음</button><button class="btn" data-act="cg-page" data-p="${CG.page - 1}" ${CG.page ? '' : 'disabled'}>이전</button>
       <span class="pi">${CG.page + 1} / ${pages} 쪽</span>
@@ -1700,6 +1719,8 @@ document.addEventListener('click', async ev => {
     else if(act === 'top-tab'){ TOPTAB = b.dataset.v; lsSet('l9toptab', TOPTAB); await render(); }
     else if(act === 'my-reset'){ ST.cur = null; ST.recent = []; saveSession(); await render(); window.scrollTo({top: 0}); toast('캐릭터 화면을 초기화했습니다 (추적 · 메모는 그대로)'); }
     else if(act === 'cg-per'){ CG.per = Number(b.dataset.v); CG.page = 0; CG.mv = 24; saveCG(); await render(); }
+    else if(act === 'cg-sorth'){ if(CG.sort === b.dataset.v) CG.dir = -(CG.dir || -1); else { CG.sort = b.dataset.v; CG.dir = CGDIR0[CG.sort] || -1; } CG.page = 0; saveCG(); await render(); }
+    else if(act === 'cg-dir'){ CG.dir = -(CG.dir || -1); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-cf'){ CG.cf = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-kind'){ CG.kind = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-page'){ CG.page = Math.max(0, Number(b.dataset.p)); await render(); document.getElementById('cglist')?.scrollIntoView({block: 'start'}); }
@@ -1782,6 +1803,7 @@ document.addEventListener('change', e => {
   else if(t === 'tr-w'){ TRF.w = Number(e.target.value); saveTRF(); render(); }
   else if(t === 'tr-sort'){ TRF.sort = e.target.value; saveTRF(); render(); }
   else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.s = 0; CG.page = 0; CG.mv = 24; saveCG(); render(); }
+  else if(t === 'cg-sort'){ CG.sort = e.target.value; CG.dir = CGDIR0[CG.sort] || -1; CG.page = 0; saveCG(); render(); }
   else if(t === 'cg-s'){ CG.s = Number(e.target.value); CG.page = 0; CG.mv = 24; saveCG(); render(); }
 });
 let QT = null;

@@ -834,3 +834,11 @@ textarea.memo:focus{outline:none;border-color:var(--hi);box-shadow:var(--glow)}
   table.rk.chg td,table.rk.chg th{padding:7px 4px}
   table.rk.chg .ckb{font-size:10.5px;padding:1px 4px}
 }
+
+/* v1.0.1 — 변경 목록 정렬 · 월드/서버 열 */
+.rk th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+.rk th.sortable:hover{color:var(--hi);background:rgba(var(--c),.08)}
+.rk th.sortable.on{color:var(--hi)}
+.msub{display:none}
+.cgdir{padding:5px 10px;font-size:12px}
+@media (max-width:640px){ table.rk.chg .cgws{display:none} .msub{display:block} }
