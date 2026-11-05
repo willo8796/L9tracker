@@ -19,11 +19,13 @@
   moves.json           최근 닉네임 변경 · 월드 이전 연결표
   changes.json         변경 이력 (닉네임·길드·월드·서버) + 월드/서버 이전 캐릭터 추적
   skip/<월드>.json     수집 기준 밖 캐릭터의 마지막 전투력 (조회 대상 고르기용)
+  watch.json           감시 캐릭터 {"월드|닉네임": 감시 끝 날짜번호} — 이전·닉변 직후 30일간 기준 밖이어도 계속 수집
 """
 import os
 import sys
 import json
 import time
+import re
 import zlib
 import shutil
 import argparse
@@ -236,6 +238,70 @@ def match_score(old, new):
     return round(100 * (0.5 + 0.5 * s), 1) if s > 0 else 0.0
 
 
+LINK_DAYS = 14   # 사라진 뒤 이 기간 안에 다시 나타나면 이어 붙임 (이전 기간에는 며칠씩 접속하지 않기도 함)
+WATCH_DAYS = 30  # 이전 · 닉네임 변경으로 연결된 캐릭터를 기준 밖이어도 계속 수집하는 기간
+
+
+def m_levels(m):
+    """[대표 무기, 대표 레벨, 무기1, 레벨1, 무기2, 레벨2] → 무기 3개 레벨 (작은 순)"""
+    if not m:
+        return []
+    return sorted(x for x in (m[1], m[3] if len(m) > 3 else None, m[5] if len(m) > 5 else None) if isinstance(x, int))
+
+
+def fingerprint(old, new, gap):
+    """직업 · 업적점수 · 마스터리 3종 · 전문화 · 전투력을 모두 비교. 맞으면 {'full': 마스터리 3종 모두 비교했는지, 'score'}"""
+    gap = max(1, gap)
+    if old["j"] != new["j"] or not old.get("ach") or not new.get("ach"):
+        return None
+    r = (new["ach"] - old["ach"]) / old["ach"]
+    if r < -0.001 or r > min(0.02, 0.003 * gap):
+        return None
+    if old.get("sp") is not None and new.get("sp") is not None:
+        d = new["sp"] - old["sp"]
+        if d < 0 or d > 2 + gap:
+            return None
+    if old.get("bp") and new.get("bp"):
+        r = (new["bp"] - old["bp"]) / old["bp"]
+        if r < -0.05 or r > min(0.20, 0.10 + 0.02 * gap):
+            return None
+    up = 1 + gap // 4
+    a, b = old.get("lv") or [], new.get("lv") or []
+    full = len(a) == 3 and len(b) == 3
+    if full:
+        if any(y - x < 0 or y - x > up for x, y in zip(a, b)):
+            return None
+    else:
+        x, y = old.get("ml"), new.get("ml")
+        if isinstance(x, int) and isinstance(y, int) and (y - x < 0 or y - x > up):
+            return None
+    return {"full": full, "score": match_score(old, new)}
+
+
+def name_norm(n):
+    """비교용 이름: 소문자, 숫자 · 기호 · 공백 · 낱자(ㅋ, ㅇ 등) 제거"""
+    return re.sub(r"[^a-z가-힣]", "", (n or "").lower())
+
+
+def name_assoc(a, b):
+    """두 닉네임이 같은 사람 것으로 보일 만큼 비슷한지 → 이유 문자열 또는 None"""
+    if not a or not b:
+        return None
+    if a == b:
+        return "같은 이름"
+    if name_related(a, b):
+        return "번호만 다름"
+    na, nb = name_norm(a), name_norm(b)
+    if len(na) >= 2 and na == nb:
+        return "숫자 · 기호만 다름"
+    if min(len(na), len(nb)) >= 3 and (na in nb or nb in na) and abs(len(na) - len(nb)) <= 2:
+        return "이름 일부 같음"
+    return None
+
+
+ASSOC_GONE_DAYS = 30
+
+
 def name_related(a, b):
     """월드 이전 후 닉네임 뒤에 번호가 붙는 경우 포함"""
     if a == b:
@@ -292,6 +358,9 @@ class Builder:
         self.wmeta = {}
         self.skip = {}
         self.alive = {}          # 월드별 오늘 사이트 목록에 있는 이름 (기준 밖이라 안 모은 캐릭터를 '사라짐'으로 보지 않도록)
+        self.extra = {}
+        self.hidden = set()          # 기준 밖이지만 전날 몰랐던 이름 (기준 밖 자리로 이전한 캐릭터 찾기용 연결 후보)
+        self.watch = {}          # 감시 캐릭터 {키: 끝 날짜번호}
 
     def jidx(self, j):
         j = j or "-"
@@ -306,15 +375,26 @@ class Builder:
             self.mcodes.append(c)
         return self.mcodes.index(c)
 
+    def entry(self, wc, v):
+        """사이트 응답 → (열 배열, cur 항목)"""
+        r = raw_row(v, v.get("_q"))
+        r[2], r[3], r[12], r[14] = self.jidx(r[2]), self.midx(r[3]), self.midx(r[12]), self.midx(r[14])
+        return r, {"w": wc, "n": r[0], "s": r[1], "j": r[2], "mc": r[3], "ml": r[4], "mr": r[5],
+                   "bp": r[6] or 0, "ach": r[9] or 0, "sp": r[10] or 0, "g": r[11],
+                   "m": [r[3], r[4], r[12], r[13], r[14], r[15]], "av": v.get("avatar_image1") or ""}
+
+    def add_extra(self, wc, raws):
+        for v in raws:
+            r, e = self.entry(wc, v)
+            self.extra[ckey(wc, r[0])] = e
+
     def add_world(self, wc, wn, raws):
         out_rows, servers = [], {}
         for v in raws:
-            r = raw_row(v, v.get("_q"))
-            r[2], r[3], r[12], r[14] = self.jidx(r[2]), self.midx(r[3]), self.midx(r[12]), self.midx(r[14])
+            r, e = self.entry(wc, v)
             servers[r[1]] = servers.get(r[1], 0) + 1
             out_rows.append(r)
-            self.cur[ckey(wc, r[0])] = {"w": wc, "n": r[0], "s": r[1], "j": r[2], "mc": r[3], "ml": r[4], "mr": r[5],
-                                        "bp": r[6] or 0, "ach": r[9] or 0, "sp": r[10] or 0, "g": r[11]}
+            self.cur[ckey(wc, r[0])] = e
         out_rows.sort(key=lambda r: -(r[6] or 0))
         srank = {}
         for i, r in enumerate(out_rows):   # 전투력 월드·서버 순위: 사이트 값이 없으면 직접 계산
@@ -369,53 +449,202 @@ class Builder:
             wname.setdefault(w["code"], w["name"])
         done_w = set(self.wmeta)
 
-        # 사라진 캐릭터 → 새로 나타난 캐릭터 연결 (닉네임 변경 · 월드 이전). 이번에 수집한 월드만 대상.
+        # 사라진 캐릭터 → 새로 나타난 캐릭터 연결 (닉네임 변경 · 월드 이전 · 서버 이전). 이번에 수집한 월드만 대상.
+        #  확실: 아래 규칙으로 한 명만 맞을 때 → 기록을 이어 붙이고 추적 · 즐겨찾기도 따라감
+        #  유력: 비슷하지만 단정할 수 없을 때(후보 여러 명 · 마스터리 정보 부족 등) → 변경 이력에 '유력'으로만 표시
         gone = [k for k, h in hist.items() if k not in cur and int(k.split("|", 1)[0]) in done_w
-                and h["p"] and h["p"][-1][0] >= today - 3
+                and h["p"] and h["p"][-1][0] >= today - LINK_DAYS
                 and k.split("|", 1)[1] not in self.alive.get(int(k.split("|", 1)[0]), ())]
         new = [k for k in cur if k not in hist]
-        pairs = []
-        if gone and new:
-            by_job = {}
-            for k in new:
-                by_job.setdefault(cur[k]["j"], []).append(k)
-            for gk in gone:
-                h = hist[gk]
-                lp = h["p"][-1]
-                old = {"j": h["j"], "bp": lp[1], "ach": lp[2], "sp": lp[5]}
-                gw, gn = gk.split("|", 1)
-                for nk in by_job.get(h["j"], []):
-                    c = cur[nk]
-                    sc = match_score(old, c)
-                    if not sc:
-                        continue
-                    related = name_related(gn, c["n"])
-                    if related and c["w"] != int(gw):
-                        ok = sc >= 80            # 월드 이전 (닉네임 같거나 번호 붙음)
-                    else:                        # 같은 월드 닉네임 변경: 엄격하게
-                        same_g = bool(h.get("g")) and h.get("g") == c["g"]
-                        no_g = not h.get("g") and not c["g"]
-                        ach_ok = lp[2] and abs(c["ach"] - lp[2]) / lp[2] <= 0.004
-                        same_s = int(gw) == c["w"] and h.get("s") == c["s"]
-                        ok = sc >= 95 and ach_ok and same_s and (same_g or related or (no_g and sc >= 97))
-                    if ok:
-                        pairs.append((sc + (5 if related else 0), gk, nk, sc))
+        # 후보 = 새로 나타난 캐릭터 + 기준 밖에서 처음 보인 캐릭터(extra). extra 는 연결될 때만 오늘 기록에 넣음
+        extra = {k: c for k, c in self.extra.items() if k not in cur and k not in hist and c["w"] in done_w}
+        cand = dict(extra)
+        cand.update(cur)
+        by_job = {}
+        for k in new + list(extra):
+            by_job.setdefault(cand[k]["j"], []).append(k)
+
+        def take(nk):        # 연결된 후보가 기준 밖(extra)이면 오늘 기록 대상에 넣고 True
+            if nk in extra:
+                cur[nk] = extra[nk]
+                self.hidden.add(nk)     # 오늘 chars 파일에는 없음 (내일부터 감시 목록으로 수집)
+                return True
+            return False
+
+        def old_fp(h):
+            lp = h["p"][-1]
+            m = h.get("m") or [lp[6], lp[3]]
+            return {"j": h["j"], "bp": lp[1], "ach": lp[2], "sp": lp[5], "ml": lp[3], "lv": m_levels(m)}
+
+        def new_fp(c):
+            return {"j": c["j"], "bp": c["bp"], "ach": c["ach"], "sp": c["sp"], "ml": c["ml"], "lv": m_levels(c["m"])}
+
+        pairs, fps = [], {}
+        for gk in gone:
+            h = hist[gk]
+            lp = h["p"][-1]
+            old = old_fp(h)
+            gap = today - lp[0]
+            gw, gn = gk.split("|", 1)
+            for nk in by_job.get(h["j"], []):
+                c = cand[nk]
+                sc = match_score(old, c)
+                fp = fingerprint(old, new_fp(c), gap)
+                if fp:
+                    fps.setdefault(gk, []).append((fp, nk))
+                if not sc:
+                    continue
+                related = name_related(gn, c["n"])
+                if related and c["w"] != int(gw):
+                    ok = sc >= 80            # 월드 이전 (닉네임 같거나 번호 붙음)
+                else:                        # 같은 월드 닉네임 변경: 엄격하게
+                    same_g = bool(h.get("g")) and h.get("g") == c["g"]
+                    no_g = not h.get("g") and not c["g"]
+                    ach_ok = lp[2] and abs(c["ach"] - lp[2]) / lp[2] <= 0.004
+                    same_s = int(gw) == c["w"] and h.get("s") == c["s"]
+                    ok = sc >= 95 and ach_ok and same_s and (same_g or related or (no_g and sc >= 97))
+                if ok:
+                    pairs.append((sc + (5 if related else 0), gk, nk, sc, "이름·수치"))
+        # 지문 비교(마스터리 3종까지 모두 맞음)로 한 명만 맞으면 이름 · 월드 · 서버가 모두 바뀌어도 확실로 연결
+        cand_of_new = {}
+        for gk, l in fps.items():
+            for fp, nk in l:
+                cand_of_new.setdefault(nk, set()).add(gk)
+        for gk, l in fps.items():
+            if len(l) == 1 and l[0][0]["full"] and len(cand_of_new[l[0][1]]) == 1:
+                pairs.append((l[0][0]["score"] + 3, gk, l[0][1], l[0][0]["score"], "지문"))
+            elif len(l) > 1 and hist[gk].get("av"):
+                # 후보가 여럿이면 의상(avatar)으로 한 번 더: 마스터리 3종 일치 + 같은 의상이 딱 한 명이고, 그 후보를
+                # 같은 의상의 다른 사라진 캐릭터가 노리지 않을 때만 확실. 의상은 여러 사람이 같이 입으므로 의상만으로는 연결하지 않음
+                av = hist[gk]["av"]
+                hit = [(fp, nk) for fp, nk in l if fp["full"] and cand[nk].get("av") == av]
+                if len(hit) == 1 and not any(g2 != gk and hist[g2].get("av") == av and any(n2 == hit[0][1] and f2["full"] for f2, n2 in fps[g2])
+                                             for g2 in cand_of_new[hit[0][1]]):
+                    pairs.append((hit[0][0]["score"] + 2, gk, hit[0][1], hit[0][0]["score"], "지문+의상"))
         pairs.sort(reverse=True)
         used_g, used_n = set(), set()
-        for _, gk, nk, sc in pairs:
+        renamed = []
+        for _, gk, nk, sc, how in pairs:
             if gk in used_g or nk in used_n:
                 continue
             used_g.add(gk)
             used_n.add(nk)
             h = hist.pop(gk)
             gw, gn = gk.split("|", 1)
-            c = cur[nk]
+            c = cand[nk]
+            out = take(nk)
             if int(gw) != c["w"]:
                 h["e"].append([today, "월드 이전", wname.get(int(gw), gw), wname.get(c["w"], c["w"]), sc])
             if gn != c["n"]:
                 h["e"].append([today, "닉네임 변경", gn, c["n"], sc])
+                renamed.append((nk, gn))
             hist[nk] = h
-            moves.append({"d": today, "from": [int(gw), gn], "to": [c["w"], c["n"]], "score": sc})
+            mv = {"d": today, "from": [int(gw), gn], "to": [c["w"], c["n"]], "score": sc, "lv": "확실", "how": how,
+                  "fs": [h.get("s") or 0, h.get("g") or ""], "ts": [c["s"], c["g"] or ""]}
+            if h.get("av") and c.get("av") and h["av"] != c["av"]:
+                mv["av"] = 1         # 의상 바뀜
+            if out:
+                mv["out"] = True     # 수집 기준 밖에서 발견
+            moves.append(mv)
+            if gk in self.watch:     # 감시 중이던 캐릭터는 새 이름으로 감시 이어감
+                self.watch[nk] = max(self.watch.pop(gk), self.watch.get(nk, 0))
+        # 유력: 연결하지 못한 사라진 캐릭터의 후보
+        seen_pair = {(tuple(m["from"]), tuple(m["to"])) for m in moves}
+        likely = 0
+        for gk in gone:
+            if gk in used_g:
+                continue
+            h = hist[gk]
+            gw, gn = gk.split("|", 1)
+            # 기준 밖(extra) 후보는 확실할 때만 씀 — 유력은 다른 캐릭터일 때가 많아 30일 감시로 엉뚱한 캐릭터가 쌓이지 않도록
+            l = [(fp, nk) for fp, nk in fps.get(gk, []) if nk not in used_n and nk not in extra]
+            if not l:     # 지문은 안 맞지만 수치가 아주 비슷한 다른 월드 · 서버 캐릭터
+                old, lp = old_fp(h), h["p"][-1]
+                for nk in by_job.get(h["j"], []):
+                    if nk in extra:
+                        continue
+                    c = cand[nk]
+                    if nk in used_n or (c["w"] == int(gw) and c["s"] == h.get("s")):
+                        continue
+                    sc = match_score(old, c)
+                    dml = (c["ml"] - old["ml"]) if isinstance(c["ml"], int) and isinstance(old["ml"], int) else 0
+                    if sc >= 92 and lp[2] and -0.001 <= (c["ach"] - lp[2]) / lp[2] <= 0.005 and 0 <= dml <= 1:
+                        l.append(({"full": False, "score": sc}, nk))
+            l.sort(key=lambda x: -x[0]["score"])
+            for fp, nk in l[:3]:
+                c = cand[nk]
+                if ((int(gw), gn), (c["w"], c["n"])) in seen_pair:
+                    continue
+                likely += 1
+                mv = {"d": today, "from": [int(gw), gn], "to": [c["w"], c["n"]], "score": fp["score"], "lv": "유력",
+                      "n": len(l), "how": "지문" if fp["full"] else "수치",
+                      "fs": [h.get("s") or 0, h.get("g") or ""], "ts": [c["s"], c["g"] or ""]}
+                if h.get("av") and c.get("av") and h["av"] != c["av"]:
+                    mv["av"] = 1
+                moves.append(mv)
+        if likely:
+            log(f"유력 후보 {likely}건 (확실히 단정할 수 없어 연결하지 않고 변경 이력에 표시)")
+        n_out = sum(1 for k in extra if k in cur)
+        if n_out:
+            log(f"수집 기준 밖에서 찾은 이전 캐릭터 {n_out}명")
+        # 감시 목록: 오늘 월드 · 서버 이전이나 닉네임 변경으로 연결된(확실 · 유력) 캐릭터는 WATCH_DAYS 동안 기준 밖이어도 수집
+        for m in moves:
+            if m["d"] == today and m.get("lv") in ("확실", "유력") and (
+                    m["from"] != m["to"] or (m.get("fs") or [0])[0] != (m.get("ts") or [0])[0]):
+                k = ckey(*m["to"])
+                self.watch[k] = max(self.watch.get(k, 0), today + WATCH_DAYS)
+        self.watch = {k: v for k, v in self.watch.items() if isinstance(v, int) and v >= today}
+
+        # 연관 닉네임 추정 (참고용): 닉네임을 바꾼 캐릭터의 새 이름이 다른 캐릭터(사라진 캐릭터 · 다른 캐릭터의 예전 이름 ·
+        # 같은 월드의 현재 캐릭터)의 이름과 비슷하면 기록. 예) A가 B 캐릭터를 사서 A와 관련된 이름으로 바꾼 경우
+        if renamed:
+            gone_pool = [(k, h) for k, h in hist.items() if k not in cur and h.get("p") and h["p"][-1][0] >= today - ASSOC_GONE_DAYS]
+            old_pool = []
+            for k, h in hist.items():
+                for e in h.get("e", []):
+                    if e[1] == "닉네임 변경" and e[0] >= today - 90 and e[2]:
+                        old_pool.append((k, e[2], e[0]))
+            by_norm = {}
+            for k, c in cur.items():
+                by_norm.setdefault((c["w"], name_norm(re.sub(r"\d+$", "", c["n"]))), []).append(k)
+            na = 0
+            for nk, oldn in renamed:
+                c = cur[nk]
+                newn = c["n"]
+                rel = []
+                for k, h in gone_pool:
+                    w2, n2 = k.split("|", 1)
+                    why = name_assoc(newn, n2)
+                    if why:
+                        rel.append({"w": int(w2), "n": n2, "s": h.get("s") or 0, "g": h.get("g") or "", "kind": "사라진 캐릭터",
+                                    "why": why, "d": h["p"][-1][0], "bp": h["p"][-1][1]})
+                for k, on, d in old_pool:
+                    if k == nk or on == oldn:
+                        continue
+                    why = name_assoc(newn, on)
+                    if why:
+                        w2, n2 = k.split("|", 1)
+                        o = cur.get(k) or {}
+                        rel.append({"w": int(w2), "n": on, "now": n2, "s": o.get("s") or (hist.get(k) or {}).get("s") or 0,
+                                    "g": o.get("g") or "", "kind": "다른 캐릭터의 예전 이름", "why": why, "d": d, "bp": o.get("bp")})
+                base = name_norm(re.sub(r"\d+$", "", newn))
+                if len(base) >= 3:      # 같은 월드 현재 캐릭터는 흔한 짧은 이름이 많아 3글자 이상만
+                    for k in by_norm.get((c["w"], base), []):
+                        if k == nk:
+                            continue
+                        o = cur[k]
+                        why = name_assoc(newn, o["n"])
+                        if why and why != "이름 일부 같음":
+                            rel.append({"w": o["w"], "n": o["n"], "s": o["s"], "g": o["g"] or "", "kind": "같은 월드 현재 캐릭터",
+                                        "why": why, "d": today, "bp": o["bp"]})
+                if rel:
+                    order = {"같은 이름": 0, "번호만 다름": 1, "숫자 · 기호만 다름": 2, "이름 일부 같음": 3}
+                    korder = {"사라진 캐릭터": 0, "다른 캐릭터의 예전 이름": 0, "같은 월드 현재 캐릭터": 1}
+                    rel.sort(key=lambda r: (korder.get(r["kind"], 9), order.get(r["why"], 9), -(r["d"] or 0)))
+                    na += 1
+                    moves.append({"d": today, "lv": "연관", "from": [c["w"], oldn], "to": [c["w"], newn], "rel": rel[:5]})
+            if na:
+                log(f"연관 닉네임 추정 {na}건 (참고용)")
 
         for k, c in cur.items():
             h = hist.get(k)
@@ -431,6 +660,8 @@ class Builder:
                 if h.get("j") != c["j"] and isinstance(h.get("j"), int):
                     h["e"].append([today, "직업 변경", jobs[h["j"]] if 0 <= h["j"] < len(jobs) else "", jobs[c["j"]], None])
             h["j"], h["g"], h["s"] = c["j"], c["g"], c["s"]
+            h["m"] = c["m"]
+            h["av"] = c.get("av") or ""
             h["p"].append([today, c["bp"], c["ach"], c["ml"], c["mr"], c["sp"], c["mc"]])
 
         cut = today - HIST_DAYS
@@ -441,8 +672,11 @@ class Builder:
             if not h["p"]:
                 del hist[k]
         moves = [m for m in moves if m["d"] > today - MOVE_DAYS]
-        _dump(os.path.join(self.data, "gevents.json"), build_gevents(hist, cur, self.mcodes, today))
-        _dump(os.path.join(self.data, "changes.json"), build_changes(hist, cur, self.mcodes, today, wname))
+        vis = {k: v for k, v in cur.items() if k not in self.hidden} if self.hidden else cur   # 오늘 chars 파일에 있는 캐릭터
+        _dump(os.path.join(self.data, "gevents.json"), build_gevents(hist, vis, self.mcodes, today))
+        _dump(os.path.join(self.data, "changes.json"),
+              build_changes(hist, vis, self.mcodes, today, wname, moves, {w: a for w, a in self.alive.items() if w in done_w}, jobs, self.hidden))
+        _dump(os.path.join(self.data, "watch.json"), self.watch)
         shards = [dict() for _ in range(SHARDS)]
         for k, h in hist.items():
             shards[shard_of(k)][k] = h
@@ -488,8 +722,8 @@ def build_gevents(hist, cur, mcodes, today):
     return out
 
 
-def select_names(names, rule, prev_rows, skip, today, force=False):
-    """조회할 이름 고르기. prev_rows: 전날 chars 행, skip: {이름: [전투력, 서버, 확인일]}"""
+def select_names(names, rule, prev_rows, skip, today, force=False, always=()):
+    """조회할 이름 고르기. prev_rows: 전날 chars 행, skip: {이름: [전투력, 서버, 확인일]}, always: 늘 조회할 이름(감시 목록)"""
     if not rule or force or (not prev_rows and not skip):
         return list(names)
     known = {}
@@ -508,7 +742,7 @@ def select_names(names, rule, prev_rows, skip, today, force=False):
     out = []
     for n in names:
         k = known.get(n)
-        if k is None:
+        if k is None or n in always:
             out.append(n); continue
         bp, sv, day = k
         line = rule[1] if rule[0] == "bp" else cut.get(sv, 0)
@@ -517,8 +751,8 @@ def select_names(names, rule, prev_rows, skip, today, force=False):
     return out
 
 
-def apply_rule(raws, rule):
-    """조회 결과 → (저장할 결과, 기준 밖 결과)"""
+def apply_rule(raws, rule, always=()):
+    """조회 결과 → (저장할 결과, 기준 밖 결과). always: 기준 밖이어도 저장할 이름(감시 목록)"""
     if not rule:
         return raws, []
     bp = lambda v: to_int(v.get("battle_power_point")) or 0
@@ -533,17 +767,158 @@ def apply_rule(raws, rule):
             l.sort(key=lambda v: -bp(v))
             keep += l[:rule[1]]
     ids = set(map(id, keep))
+    if always:
+        keep += [v for v in raws if id(v) not in ids and (v.get("character_name") in always or v.get("_q") in always)]
+        ids = set(map(id, keep))
     return keep, [v for v in raws if id(v) not in ids]
 
 
 CHANGE_KINDS = ["닉네임 변경", "길드 변경", "월드 이전", "서버 변경"]
 
 
-def build_changes(hist, cur, mcodes, today, wname):
-    """변경 이력: 최근 CHANGE_DAYS일 닉네임·길드·월드·서버 변경 목록 + 월드/서버 이전 캐릭터별 전체 변경 내역.
-    list 한 줄 = [날짜, 종류번호, 월드, 서버, 현재 닉네임, 이전, 이후, 현재 길드, 전투력, 대표 마스터리 레벨, 대표 무기, 현재 수집 대상인지]"""
+def _mcode(mcodes, mi):
+    return mcodes[mi] if isinstance(mi, int) and 0 <= mi < len(mcodes) else None
+
+
+def _now_vals(c, mcodes):
+    """현재(오늘 수집) 값 — 없으면 전부 None"""
+    if not c:
+        return {"bp": None, "ml": None, "mc": None, "sp": None, "ach": None}
+    return {"bp": c["bp"], "ml": c["ml"], "mc": _mcode(mcodes, c["mc"]), "sp": c["sp"], "ach": c["ach"]}
+
+
+LAUNDER_FLAGS = ["월드 이전", "서버 이전", "닉네임 변경", "길드 변경", "의상 변경", "기준 밖에서 발견"]
+
+
+def launder_level(rn, gch, avch, hops):
+    """이전(월드 · 서버) 했다는 전제에서 신분 세탁 의심 정도. None = 목록에 넣지 않음 (이전만 한 경우)"""
+    if hops >= 2:
+        return "높음"
+    if rn:
+        return "높음" if (gch or avch) else "보통"
+    return "낮음" if gch else None
+
+
+def build_launder(hist, cur, mcodes, today, wname, moves, hidden=frozenset()):
+    """신분 세탁 의심: 월드 · 서버 이전과 함께 닉네임 · 길드 · 의상을 바꾼 캐릭터 (최근 CHANGE_DAYS일, 최신 순)
+    - 확실 · 유력 연결 중 월드나 서버가 바뀐 것 (서버 이전은 같은 월드 안에서만 비교 — 월드가 다르면 서버 번호는 의미 없음)
+    - 같은 이름 그대로 서버만 바뀌고 같은 날 길드도 바뀐 기록
+    hops = 이 캐릭터의 연결 사슬에서 최근 CHANGE_DAYS일 동안 이전 · 닉변이 있었던 날 수"""
     cut = today - CHANGE_DAYS
-    lst, moved = [], []
+    wcode = {v: k for k, v in wname.items()}
+    fwd = {}
+    for m in moves:
+        if m.get("lv") == "확실":
+            fwd.setdefault(ckey(*m["from"]), []).append((m["d"], ckey(*m["to"])))
+
+    def final(k, d):          # 확실 연결을 따라가 지금 키 찾기
+        for _ in range(30):
+            nx = [x for x in fwd.get(k, ()) if x[0] > d]
+            if not nx:
+                break
+            d, k = min(nx)
+        return k
+
+    def tdays(k):
+        return {e[0] for e in (hist.get(k) or {}).get("e", ()) if e[1] in ("월드 이전", "서버 변경", "닉네임 변경") and e[0] > cut}
+
+    out = []
+    for m in moves:
+        if m.get("lv") not in ("확실", "유력") or m["d"] <= cut:
+            continue
+        fw, fn = m["from"]
+        tw, tn = m["to"]
+        fs, fg = (m.get("fs") or [0, ""])
+        ts, tg = (m.get("ts") or [0, ""])
+        wch = fw != tw
+        sch = not wch and bool(fs) and bool(ts) and fs != ts
+        if not (wch or sch):
+            continue
+        if m["lv"] == "유력" and m.get("how") == "수치":
+            continue        # 수치만 비슷한 유력 후보는 다른 캐릭터일 때가 많음
+        rn, gch, avch = fn != tn, (fg or "").strip() != (tg or "").strip(), bool(m.get("av")) and m["lv"] == "확실"
+        tk = final(ckey(tw, tn), m["d"])
+        days = tdays(tk) | {m["d"]}
+        if m["lv"] == "유력":
+            days |= tdays(ckey(fw, fn))     # 연결하지 않은 사라진 캐릭터의 지난 기록
+        lvl = launder_level(rn, gch, avch, len(days))
+        if not lvl:
+            continue
+        if m["lv"] == "유력" and lvl == "높음":
+            lvl = "보통"    # 같은 캐릭터인지 확실하지 않으면 높음으로 올리지 않음
+        flags = [f for f, on in zip(LAUNDER_FLAGS, (wch, sch, rn, gch, avch, bool(m.get("out")))) if on]
+        c = cur.get(tk)
+        e = {"d": m["d"], "lv": m["lv"], "level": lvl, "flags": flags, "from": {"w": fw, "s": fs or 0, "n": fn, "g": fg or ""},
+             "to": {"w": tw, "s": ts or 0, "n": tn, "g": tg or ""}, "score": m.get("score"), "nc": 1 if m["lv"] == "확실" else (m.get("n") or 1)}
+        e.update(_now_vals(c, mcodes))
+        tw2, tn2 = tk.split("|", 1)
+        e.update({"seen": bool(c) and tk not in hidden, "hops": len(days), "now": {"w": int(tw2), "n": tn2}})
+        out.append(e)
+    for k, h in hist.items():       # 같은 이름으로 서버만 이전 + 같은 날 길드 변경
+        ev = h.get("e") or []
+        for x in ev:
+            if x[1] != "서버 변경" or x[0] <= cut:
+                continue
+            same = [y for y in ev if y[0] == x[0]]
+            ge = [y for y in same if y[1] == "길드 변경"]
+            if not ge or any(y[1] in ("월드 이전", "닉네임 변경") for y in same):   # 연결로 생긴 서버 변경은 위에서 다룸
+                continue
+            w, n = k.split("|", 1)
+            w = int(w)
+            for y in sorted(ev, key=lambda y: y[0]):   # 그날 이후 바뀐 이름 · 월드가 있으면 그때 값으로
+                if y[0] > x[0] and y[1] == "닉네임 변경":
+                    n = y[2] or n
+                    break
+            for y in sorted(ev, key=lambda y: y[0]):
+                if y[0] > x[0] and y[1] == "월드 이전":
+                    w = wcode.get(y[2], w)
+                    break
+            days = tdays(k) | {x[0]}
+            c = cur.get(k)
+            e = {"d": x[0], "lv": "확실", "level": launder_level(False, True, False, len(days)), "flags": ["서버 이전", "길드 변경"],
+                 "from": {"w": w, "s": to_int(re.sub(r"\D", "", x[2] or "")) or 0, "n": n, "g": ge[0][2] or ""},
+                 "to": {"w": w, "s": to_int(re.sub(r"\D", "", x[3] or "")) or 0, "n": n, "g": ge[0][3] or ""}, "score": None, "nc": 1}
+            e.update(_now_vals(c, mcodes))
+            e.update({"seen": bool(c) and k not in hidden, "hops": len(days), "now": {"w": w, "n": n}})
+            out.append(e)
+    lo = {"높음": 0, "보통": 1, "낮음": 2}
+    out.sort(key=lambda e: (-e["d"], lo[e["level"]]))
+    return out[:3000]
+
+
+GONE_MAX = 3000
+
+
+def build_gone(hist, cur, mcodes, today, alive, jobs):
+    """사라졌고 아직 (확실히) 연결되지 않은 캐릭터: 오늘 수집한 월드의 사이트 목록에 이름이 없고 마지막 기록이 LINK_DAYS일 안.
+    이전 · 닉변 후 아직 못 찾은 캐릭터 외에 삭제된 캐릭터, 사이트 목록(서버별 전투력 1,000위) 밖으로 밀려난 캐릭터도 섞여 있음."""
+    out = []
+    for k, h in hist.items():
+        if k in cur or not h.get("p"):
+            continue
+        w, n = k.split("|", 1)
+        w = int(w)
+        if w not in alive or n in alive[w]:
+            continue
+        lp = h["p"][-1]
+        if lp[0] < today - LINK_DAYS:
+            continue
+        j = h.get("j")
+        out.append({"w": w, "s": h.get("s") or 0, "n": n, "g": h.get("g") or "",
+                    "j": jobs[j] if isinstance(j, int) and 0 <= j < len(jobs) else (j if isinstance(j, str) else ""),
+                    "bp": lp[1], "ml": lp[3], "mc": _mcode(mcodes, lp[6]), "sp": lp[5], "ach": lp[2], "last": lp[0]})
+    out.sort(key=lambda e: (-e["last"], -(e["bp"] or 0)))
+    return out
+
+
+def build_changes(hist, cur, mcodes, today, wname, moves=(), alive=None, jobs=(), hidden=frozenset()):
+    """변경 이력: 최근 CHANGE_DAYS일 닉네임·길드·월드·서버 변경 목록 + 월드/서버 이전 캐릭터별 전체 변경 내역.
+    list 한 줄 = [날짜, 종류번호, 월드, 서버, 현재 닉네임, 이전, 이후, 현재 길드, 전투력, 대표 마스터리 레벨, 대표 무기, 현재 수집 대상인지,
+                 확실도(1 확실 · 2 유력 · 0 해당 없음), 유력 후보 수, 일치도, 전문화, 업적점수]
+    names = 닉네임을 바꾼 적이 있는 캐릭터의 [월드, 현재 닉네임, [[날짜, 이전, 이후], ...], 현재 수집 대상인지] (이전 닉네임 검색용)
+    assoc = 연관 닉네임 추정 (참고용)"""
+    cut = today - CHANGE_DAYS
+    lst, moved, names, assoc = [], [], [], []
     for k, h in hist.items():
         ev = [e for e in h.get("e", []) if e[1] in CHANGE_KINDS]
         if not ev:
@@ -557,16 +932,58 @@ def build_changes(hist, cur, mcodes, today, wname):
         mc = mcodes[mi] if isinstance(mi, int) and 0 <= mi < len(mcodes) else None
         g = (c["g"] if c else h.get("g")) or ""
         s = (c["s"] if c else h.get("s")) or 0
+        sp = c["sp"] if c else (lp[5] if lp else None)
+        ach = c["ach"] if c else (lp[2] if lp else None)
+        nm = [[e[0], e[2] or "", e[3] or ""] for e in ev if e[1] == "닉네임 변경"]
+        if nm:
+            names.append([int(w), n, nm, 1 if c else 0])
         for e in ev:
             if e[0] > cut:
-                lst.append([e[0], CHANGE_KINDS.index(e[1]), int(w), s, n, e[2] or "", e[3] or "", g, bp, ml, mc, 1 if c else 0])
+                k = CHANGE_KINDS.index(e[1])
+                conf = 1 if k in (0, 2, 3) else 0
+                lst.append([e[0], k, int(w), s, n, e[2] or "", e[3] or "", g, bp, ml, mc, 1 if c else 0, conf, 0, e[4] if len(e) > 4 else None, sp, ach])
         if any(e[1] in ("월드 이전", "서버 변경") for e in ev):
-            moved.append({"w": int(w), "s": s, "n": n, "g": g, "bp": bp, "ml": ml, "mc": mc, "seen": bool(c),
+            moved.append({"w": int(w), "s": s, "n": n, "g": g, "bp": bp, "ml": ml, "mc": mc, "seen": bool(c), "lv": "확실",
                           "e": [[e[0], CHANGE_KINDS.index(e[1]), e[2] or "", e[3] or ""] for e in ev],
                           "last": max(e[0] for e in ev if e[1] in ("월드 이전", "서버 변경"))})
+    # 유력 후보 (연결하지 않음)
+    for m in moves:
+        if m.get("lv") == "연관" and m["d"] > cut:
+            tw, tn = m["to"]
+            c = cur.get(ckey(tw, tn))
+            mi = c["mc"] if c else -1
+            assoc.append({"d": m["d"], "w": tw, "n": tn, "old": m["from"][1], "s": c["s"] if c else 0, "g": (c["g"] or "") if c else "",
+                          "bp": c["bp"] if c else None, "ml": c["ml"] if c else None,
+                          "mc": mcodes[mi] if isinstance(mi, int) and 0 <= mi < len(mcodes) else None,
+                          "seen": bool(c), "rel": m.get("rel") or []})
+        if m.get("lv") != "유력" or m["d"] <= cut:
+            continue
+        fw, fn = m["from"]
+        tw, tn = m["to"]
+        fs, fg = (m.get("fs") or [0, ""])
+        ts, tg = (m.get("ts") or [0, ""])
+        c = cur.get(ckey(tw, tn))
+        k = 2 if fw != tw else 3 if fs != ts else 0
+        a = f"{wname.get(fw, fw)} {fs:02d}서버 · {fn}" if fs else f"{wname.get(fw, fw)} · {fn}"
+        b = f"{wname.get(tw, tw)} {ts:02d}서버 · {tn}" if ts else f"{wname.get(tw, tw)} · {tn}"
+        mi = c["mc"] if c else -1
+        mc = mcodes[mi] if isinstance(mi, int) and 0 <= mi < len(mcodes) else None
+        lst.append([m["d"], k, tw, ts, tn, a, b, tg, c["bp"] if c else None, c["ml"] if c else None, mc, 1 if c else 0, 2, m.get("n") or 1, m.get("score"),
+                    c["sp"] if c else None, c["ach"] if c else None])
+        if k in (2, 3):
+            moved.append({"w": tw, "s": ts, "n": tn, "g": tg, "bp": c["bp"] if c else None, "ml": c["ml"] if c else None, "mc": mc,
+                          "seen": bool(c), "lv": "유력", "nc": m.get("n") or 1, "score": m.get("score"), "from": [fw, fn, fs, fg],
+                          "e": [[m["d"], k, wname.get(fw, fw) if k == 2 else f"{fs:02d}서버", wname.get(tw, tw) if k == 2 else f"{ts:02d}서버"]]
+                               + ([[m["d"], 0, fn, tn]] if fn != tn else []) + ([[m["d"], 1, fg, tg]] if fg != tg else []),
+                          "last": m["d"]})
     lst.sort(key=lambda x: (-x[0], x[1]))
     moved.sort(key=lambda x: -x["last"])
-    return {"date": today, "days": CHANGE_DAYS, "kinds": CHANGE_KINDS, "list": lst[:CHANGE_MAX], "moved": moved[:3000]}
+    assoc.sort(key=lambda x: -x["d"])
+    gone = build_gone(hist, cur, mcodes, today, alive or {}, jobs or [])
+    return {"date": today, "days": CHANGE_DAYS, "kinds": CHANGE_KINDS, "list": lst[:CHANGE_MAX], "moved": moved[:3000],
+            "names": names, "assoc": assoc[:2000],
+            "launder": build_launder(hist, cur, mcodes, today, wname, moves, hidden),
+            "gone": gone[:GONE_MAX], "gone_total": len(gone)}
 
 
 def crawl_world(fetch, wc, names, workers, tick):
@@ -654,7 +1071,7 @@ def copy_prev(out, prev, log=print):
     os.makedirs(os.path.join(data, "chars"), exist_ok=True)
     os.makedirs(os.path.join(data, "hist"), exist_ok=True)
     os.makedirs(os.path.join(data, "skip"), exist_ok=True)
-    files_extra = ["data/gevents.json", "data/changes.json"] + [f"data/skip/{w['code']}.json" for w in meta.get("worlds", []) if w.get("rule")]
+    files_extra = ["data/gevents.json", "data/changes.json", "data/watch.json"] + [f"data/skip/{w['code']}.json" for w in meta.get("worlds", []) if w.get("rule")]
     files = ["data/meta.json", "data/moves.json"] + files_extra + [f"data/chars/{w['code']}.json" for w in meta.get("worlds", [])] \
         + [f"data/hist/{i:02d}.json" for i in range(meta.get("shards", SHARDS))]
     for rel in files:
@@ -777,6 +1194,11 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
         say("names", wn, len(names[wc]))
     today = dnum(dd)
     plan, skips, prows = {}, {}, {}
+    watch = {k: v for k, v in ((prev.read("data/watch.json") or {}) if old else {}).items() if isinstance(v, int) and v >= today}
+    wnames = {}
+    for k in watch:
+        w, n = k.split("|", 1)
+        wnames.setdefault(int(w), set()).add(n)
     for wc, wn in worlds:
         rule = rule_of(wn)
         pj = prev.read(f"data/chars/{wc}.json") if old else None
@@ -784,10 +1206,11 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
         sk = (prev.read(f"data/skip/{wc}.json") or {}) if old else {}
         nameset = set(names[wc])
         skips[wc] = {n: v for n, v in sk.items() if n in nameset}
-        plan[wc] = select_names(names[wc], rule, prows[wc], skips[wc], today, force)
+        plan[wc] = select_names(names[wc], rule, prows[wc], skips[wc], today, force, wnames.get(wc, ()))
         if rule:
             log(f"{wn}: 수집 기준 {rule_text(rule)} — 목록 {len(names[wc]):,}명 중 {len(plan[wc]):,}명 조회")
     B.alive = {wc: set(v) for wc, v in names.items()}
+    B.watch = watch
     B.write_partial()
     total = sum(len(v) for v in plan.values())
     st = {"done": 0}
@@ -809,7 +1232,10 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
             log(f"{wn}: 조회 실패가 많아 저장하지 않습니다 ({len(rows)}/{len(plan[wc])})")
             continue
         rule = rule_of(wn)
-        keep, out_rule = apply_rule(rows, rule)
+        keep, out_rule = apply_rule(rows, rule, wnames.get(wc, ()))
+        if rule and (prows[wc] or skips[wc]):   # 전날 몰랐던 이름은 기준 밖이어도 연결 후보로 (기준 밖 자리로 이전한 캐릭터)
+            known = set(skips[wc]) | {r[0] for r in prows[wc]}
+            B.add_extra(wc, [v for v in out_rule if (v.get("character_name") or v.get("_q")) not in known and v.get("_q") not in known])
         if rule:
             sk = dict(skips[wc])
             got = set()
