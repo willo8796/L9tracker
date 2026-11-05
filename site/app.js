@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.0.1';
+const VERSION = '1.1.0';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -17,7 +17,7 @@ const DEFAULT_MASTERIES = [['Mastery_Hand','맨손'],['Mastery_Sword','검과 �
 
 /* ------------------------------------------------------------ 저장소 (이 브라우저에만 저장) */
 const SKEY = 'l9tracker.v6';
-function freshStore(){ return {v:1, tracked:[], mastery:{}, integ:{}, imported:false, expr:[]}; }
+function freshStore(){ return {v:1, tracked:[], mastery:{}, integ:{}, imported:false, expr:[], gnote:{}}; }
 // v0.9.9: 즐겨찾기 기능 삭제 → 메모가 있던 즐겨찾기는 추적 캐릭터 메모로 옮김 (추적 안 하던 캐릭터는 추적에 추가)
 function migrateFav(){
   const fs = ST.fav; if(!fs) return false;
@@ -558,6 +558,8 @@ async function pageTrack(){
   await followMoves().then(n => n.length && showLines('닉네임 변경 · 월드 이전을 따라갔습니다', n));
   if(!ST.tracked.length) return blank('추적 중인 캐릭터가 없습니다', '[ 검색 ] 또는 랭킹에서 캐릭터를 열고 [+ 추적 추가]를 누르세요') + BACKUP_NOTE;
   CARDS = await buildCards();
+  // 이전 세탁 의심 대상(이전 후 캐릭터)인 추적 캐릭터 표시
+  const ldTo = new Map(); for(const x of ((await changes().catch(() => null))?.launder || [])) if(x?.to) { const t = x.now || x.to, kk = key(t.w, t.n), o = ldTo.get(kk); if(!o || x.d > o.d) ldTo.set(kk, x); }
   let sel = CARDS.findIndex(c => c.k === TRSEL); if(sel < 0) sel = 0;
   const lastCh = c => c.ev.find(x => x.kind === '닉네임 변경' || x.kind === '길드 변경');
   for(const k of [...TRCHK]) if(!CARDS.some(c => c.k === k)) TRCHK.delete(k);
@@ -583,7 +585,7 @@ async function pageTrack(){
     ${view.length ? '' : `<tr><td colspan="10" class="emptyrow">찾는 캐릭터가 없습니다 — 검색어나 길드 필터를 바꿔 보세요</td></tr>`}
     ${view.map((c, i) => { const r = c.r, lc = lastCh(c);
       return `<tr class="rkrow ${c === CARDS[sel] ? 'mine' : ''} ${TRCHK.has(c.k) ? 'chk' : ''}" data-act="trsel" data-k="${esc(c.k)}"><td class="chk"><button class="cb ${TRCHK.has(c.k) ? 'on' : ''}" data-act="tr-chk" data-k="${esc(c.k)}" title="선택">${TRCHK.has(c.k) ? '✓' : ''}</button></td><td class="no">${i + 1}</td>
-        <td class="l"><div class="nm">${esc(c.t.n)}</div><div class="sub">${esc(wName(c.t.w))} ${r ? serverLabel(r[C.s]) : ''}</div>${c.t.memo ? `<div class="trmemo" title="${esc(c.t.memo)}">메모 · ${esc(c.t.memo.split('\n')[0])}</div>` : ''}</td>
+        <td class="l"><div class="nm">${esc(c.t.n)}</div><div class="sub">${esc(wName(c.t.w))} ${r ? serverLabel(r[C.s]) : ''}</div>${ldTo.has(c.k) ? `<div class="trld">${ldBadge(ldTo.get(c.k).level, '이전 · 세탁 의심 ')}</div>` : ''}${c.t.memo ? `<div class="trmemo" title="${esc(c.t.memo)}">메모 · ${esc(c.t.memo.split('\n')[0])}</div>` : ''}</td>
         <td class="hide-s l">${esc(r ? (r[C.g] || '-') : '--')}</td>
         <td>${r ? `<span class="big" style="font-size:19px">${nf(r[C.ml])}</span><div class="sub">${esc(mname(mcode(r[C.mc])))}</div>` : '--'}</td>
         <td><span class="big" style="font-size:19px">${nf(r ? r[C.bp] : c.last?.bp)}</span>${delta(c.last?.bp, c.prev?.bp)}</td>
@@ -821,6 +823,55 @@ function moveTable(list, kind){
       <td class="l">${(kind === 'in' ? e.from : e.to) ? `<b class="gprev">${esc(kind === 'in' ? e.from : e.to)}</b>` : '<span class="sub">길드 없음</span>'}</td>
       <td class="l">${nameHist(e)}</td></tr>`).join('')}</table></div>`;
 }
+// 길드 코멘트 (ST.gnote — 이 브라우저에 저장, 백업 · 내 PC 동기화에 포함)
+const GCD = {};   // 입력 중인 코멘트 (다시 그려도 유지)
+function nowKST(){ return new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 16).replace('T', ' '); }
+function guildComments(g){
+  const l = ((ST.gnote || {})[g.k] || []).slice().reverse().sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0);   // 같은 분이면 나중에 쓴 것 먼저
+  return `<div class="sec">코멘트 <small>${nf(l.length)}개 · 최신 순 · 이 브라우저에만 저장됩니다 (다른 기기로 옮기려면 [캐릭터] · [추적] 아래 [백업 저장])</small></div>
+    <div class="gcm"><div class="gcm-in"><textarea class="memo" id="gcmText" data-gk="${esc(g.k)}" rows="2" placeholder="이 길드에 대한 코멘트 입력 (Ctrl+Enter로 추가)">${esc(GCD[g.k] || '')}</textarea>
+      <button class="btn pri" data-act="gc-add" data-k="${esc(g.k)}">코멘트 추가</button></div>
+    ${l.length ? `<ul class="gcm-l">${l.map(c => `<li><div class="gcm-h"><span class="dg">${esc(c.at)}</span><button class="mini-btn" data-act="gc-del" data-k="${esc(g.k)}" data-id="${esc(c.id)}">삭제</button></div><div class="gcm-t">${esc(c.t)}</div></li>`).join('')}</ul>` : '<div class="empty gcm-e">아직 코멘트가 없습니다</div>'}</div>`;
+}
+function addGComment(k){
+  const ta = $('#gcmText'), t = (ta?.value || '').trim();
+  if(!t){ toast('코멘트를 입력하세요'); ta?.focus(); return false; }
+  ST.gnote ||= {};
+  (ST.gnote[k] ||= []).push({id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), t, at: nowKST()});
+  delete GCD[k]; saveStore(); return true;
+}
+// 길드원이 월드 · 서버를 옮겼거나 행방 불명인 경우 (변경 이력 data/changes.json 의 launder · gone)
+const LDLV = {'높음': 3, '보통': 2, '낮음': 1};
+function ldBadge(level, pre = '세탁 의심 '){ return level ? `<span class="ldb l${LDLV[level] || 1}">${esc(pre + level)}</span>` : ''; }
+async function guildLaunder(g){
+  const ch = await changes().catch(() => null);
+  if(!ch) return '';
+  // 같은 길드원이 유력 후보 여러 명으로 나오면 한 줄로 (확실 · 일치도 높은 것 우선) · 유력 후보가 있는 길드원은 행방 불명에서 뺌
+  const best = new Map();
+  for(const x of (ch.launder || []).filter(x => x.from && x.to && x.from.g === g.g && x.from.w === g.w && x.from.s === g.s)){
+    const fk = key(x.from.w, x.from.n), o = best.get(fk);
+    if(!o || (x.lv === '확실') > (o.lv === '확실') || (x.lv === o.lv && (x.score ?? 0) > (o.score ?? 0))) best.set(fk, Object.assign({}, x, {cands: (o?.cands || 0) + 1}));
+    else o.cands = (o.cands || 1) + 1;
+  }
+  const mv = [...best.values()].sort((a, b) => b.d - a.d);
+  const gone = (ch.gone || []).filter(x => x.g === g.g && x.w === g.w && x.s === g.s && !best.has(key(x.w, x.n))).sort((a, b) => b.last - a.last || (b.bp || 0) - (a.bp || 0));
+  if(!mv.length && !gone.length) return '';
+  const mvT = mv.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk gmv gld"><tr><th>날짜</th><th class="l">이전 닉네임</th><th class="l">옮긴 곳</th><th>단계</th></tr>
+    ${mv.map(x => `<tr class="${x.seen ? 'rkrow' : ''}" ${x.seen ? `data-act="char" data-w="${(x.now || x.to).w}" data-n="${esc((x.now || x.to).n)}"` : ''}><td class="dg" style="font-size:16px">${esc(dayStr(x.d).slice(5))}</td>
+      <td class="l"><span class="nm">${esc(x.from.n)}</span></td>
+      <td class="l"><b>${esc(x.to.n)}</b>${x.now && x.now.n !== x.to.n ? `<div class="sub">지금 이름 · <b>${esc(x.now.n)}</b></div>` : ''}<div class="sub">${esc(wName(x.to.w))} ${serverLabel(x.to.s)} · ${esc(x.to.g || '길드 없음')}</div></td>
+      <td>${ldBadge(x.level, '')}${x.lv === '유력' ? `<div><span class="cfb c2">유력${x.cands > 1 ? ` · 후보 ${x.cands}명` : ''}</span></div>` : ''}</td></tr>`).join('')}</table></div>`
+    : '<div class="empty" style="padding:12px 16px">옮긴 길드원 없음</div>';
+  const goT = gone.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk gmv gld"><tr><th>마지막 확인</th><th class="l">캐릭터</th><th>전투력</th><th>대표 마스터리</th></tr>
+    ${gone.map(x => `<tr><td class="dg" style="font-size:16px">${esc(dayStr(x.last).slice(5))}</td><td class="l"><span class="nm">${esc(x.n)}</span><div class="sub">${esc(x.j || '')}</div></td>
+      <td><span class="big" style="font-size:18px">${nf(x.bp)}</span></td><td><span class="big" style="font-size:18px">${nf(x.ml)}</span><div class="sub">${esc(mname(x.mc))}</div></td></tr>`).join('')}</table></div>`
+    : '<div class="empty" style="padding:12px 16px">행방 불명 길드원 없음</div>';
+  return `<div class="sec">최근 이전 · 행방 불명 길드원 <small>월드 · 서버를 옮겼거나 사라진 길드원 · 자세한 내용은 [변경 이력]</small></div>
+    <div class="hpanels gpanels">
+      <div class="hpanel ${mv.length ? 'has' : ''}"><div class="hp-h"><span>옮긴 길드원</span><b class="cnt">${mv.length}명</b></div>${mvT}</div>
+      <div class="hpanel ${gone.length ? 'has' : ''}"><div class="hp-h"><span>행방 불명 길드원</span><b class="cnt">${gone.length}명</b></div>${goT}</div>
+    </div>`;
+}
 async function pageGuild(){
   if(!readyWorlds().length) return noData();
   const hits = GS.q ? await findGuilds(GS.q) : [];
@@ -831,7 +882,7 @@ async function pageGuild(){
   if(GS.q){
     h += `<div class="sec">검색 결과 <small>${nf(hits.length)}개 · 길드를 누르면 길드 정보</small></div>`
       + (hits.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk glist"><tr><th class="l">길드명</th><th>월드</th><th>서버</th><th>인원</th><th>평균 전투력</th><th>최고 전투력</th></tr>
-        ${hits.slice(0, 100).map(g => `<tr class="rkrow ${g.k === GS.sel ? 'mine' : ''}" data-act="g-open" data-k="${esc(g.k)}"><td class="l"><span class="nm">${esc(g.g)}</span></td>
+        ${hits.slice(0, 100).map(g => `<tr class="rkrow ${g.k === GS.sel ? 'mine' : ''}" data-act="g-open" data-k="${esc(g.k)}"><td class="l"><span class="nm">${esc(g.g)}</span>${(ST.gnote?.[g.k] || []).length ? `<span class="cfb c3 gcb">코멘트 ${ST.gnote[g.k].length}</span>` : ''}</td>
           <td>${esc(wName(g.w))}</td><td>${serverLabel(g.s)}</td><td><span class="big" style="font-size:19px">${nf(g.rows.length)}</span></td>
           <td><span class="big" style="font-size:19px">${nf(Math.round(g.avg))}</span></td><td><span class="big" style="font-size:19px">${nf(g.rows[0][C.bp])}</span></td></tr>`).join('')}</table></div>`
         : '<div class="empty" style="padding:14px 16px">찾는 길드가 없습니다 — 길드원이 모두 수집 기준 밖이면 검색되지 않습니다.</div>');
@@ -862,6 +913,8 @@ async function pageGuild(){
       <div class="hpanel ${joins.length ? 'has' : ''}"><div class="hp-h"><span>신규 가입</span><b class="cnt">${joins.length}명</b></div>${moveTable(joins, 'in')}</div>
       <div class="hpanel ${leaves.length ? 'has' : ''}"><div class="hp-h"><span>탈퇴</span><b class="cnt">${leaves.length}명</b></div>${moveTable(leaves, 'out')}</div>
     </div>
+    ${await guildLaunder(g)}
+    ${guildComments(g)}
     <div class="sgrid">
       <div><div class="st">직업 구성</div>${hbars([...jm].map(([j, c]) => ({nm: jobName(j), c})).sort((a, b) => b.c - a.c), {head: ['인원', '비율'], color: '#6effa8'})}</div>
       <div><div class="st">대표 마스터리 무기</div>${hbars([...wm].map(([c, n]) => ({nm: mname(c), c: n})).sort((a, b) => b.c - a.c), {head: ['인원', '비율'], color: '#ff7ac8'})}</div>
@@ -881,8 +934,8 @@ async function pageGuild(){
 }
 
 /* ============================================================ 변경 이력 */
-const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0, sort: 'd', dir: -1}, x || {}, {page: 0, mv: 24}); })();
-function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf, sort: CG.sort, dir: CG.dir})); }catch(e){} }
+const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0, sort: 'd', dir: -1, ld: ''}, x || {}, {page: 0, mv: 24, ldm: 24, gom: 50}); })();
+function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf, sort: CG.sort, dir: CG.dir, ld: CG.ld})); }catch(e){} }
 function cfBadge(c, n, sc){ return c === 1 ? '<span class="cfb c1" title="이 캐릭터로 확실히 이어 붙였습니다">확실</span>' : c === 2 ? `<span class="cfb c2" title="비슷한 캐릭터 — 확실하지 않아 이어 붙이지 않았습니다">유력${n > 1 ? ` · 후보 ${n}명` : ''}</span>` : ''; }
 const CK = ['닉네임 변경', '길드 변경', '월드 이전', '서버 이전'];
 async function changes(){ if(!D.chg) D.chg = getJSON('data/changes.json').catch(() => null); return D.chg; }
@@ -910,6 +963,68 @@ async function oldNameNote(q, ch, wf){
         : `<span class="onr-o sub">지금 이 이름을 쓰는 캐릭터는 수집 기준 안에 없음</span>`}</div>`);
   }
   return `<div class="oldnote"><div class="sub">찾는 이름이 <b>다른 캐릭터의 예전 닉네임</b>이기도 합니다 — 같은 이름이라도 지금 그 이름을 쓰는 캐릭터와 다른 캐릭터일 수 있습니다</div>${out.join('')}</div>`;
+}
+// 이전 세탁 의심 · 행방 불명 (수집기가 만든 launder · gone — 예전 데이터에는 없음)
+const LDFLAGS = ['월드 이전', '서버 이전', '닉네임 변경', '길드 변경', '의상 변경', '기준 밖에서 발견'];
+function ldPlace(p, o){
+  // o: 비교 대상 (이전 전) — 바뀐 부분 강조
+  const hl = (on, v) => on ? `<mark class="ldc">${v}</mark>` : v;
+  const ws = `${esc(wName(p.w))}`, sv = p.s ? serverLabel(p.s) : '';
+  const g = p.g ? esc(p.g) : '<span class="sub" style="display:inline">길드 없음</span>';
+  if(!o) return `${ws} ${sv} · <span class="old">${esc(p.n)}</span> · ${g}`;
+  return `${hl(o.w !== p.w, ws)} ${hl(o.w !== p.w || o.s !== p.s, sv)} · ${hl(o.n !== p.n, `<b>${esc(p.n)}</b>`)} · ${hl((o.g || '') !== (p.g || ''), g)}`;
+}
+function launderSecs(ch, {inP, inWS, q, perLbl}){
+  if(!Array.isArray(ch.launder) && !Array.isArray(ch.gone)) return '';   // 예전 수집 데이터
+  const ok = x => x && x.from && x.to;
+  let ld = (ch.launder || []).filter(x => ok(x) && inP(x.d) && (inWS(x.from.w, x.from.s) || inWS(x.to.w, x.to.s)));
+  if(q) ld = ld.filter(x => [x.from.n, x.to.n, x.now?.n, x.from.g, x.to.g].some(v => (v || '').includes(q)));
+  const lc = {'높음': 0, '보통': 0, '낮음': 0}, seenFrom = new Set();
+  for(const x of [...ld].sort((a, b) => (LDLV[b.level] || 0) - (LDLV[a.level] || 0))){ const fk = key(x.from.w, x.from.n) + '|' + x.d; if(seenFrom.has(fk)) continue; seenFrom.add(fk); if(x.level in lc) lc[x.level]++; }
+  if(CG.ld) ld = ld.filter(x => x.level === CG.ld);
+  ld.sort((a, b) => (LDLV[b.level] || 0) - (LDLV[a.level] || 0) || b.d - a.d || (b.score ?? -1) - (a.score ?? -1));
+  let gone = (ch.gone || []).filter(x => (CG.per >= 999 || x.last >= ch.date - CG.per) && inWS(x.w, x.s));
+  if(q) gone = gone.filter(x => (x.n || '').includes(q) || (x.g || '').includes(q));
+  gone.sort((a, b) => b.last - a.last || (b.bp || 0) - (a.bp || 0));
+  const stat = x => [['전투력', nf(x.bp)], ['대표 마스터리', x.mc ? `${esc(mname(x.mc))} ${nf(x.ml)}` : nf(x.ml)], ['전문화', nf(x.sp)], ['업적점수', nf(x.ach)]]
+    .map(([l, v]) => `<span><small>${l}</small> <b class="dg">${v}</b></span>`).join('');
+  const card = x => {
+    const fl = (x.flags || []).filter(f => LDFLAGS.includes(f));
+    return `<div class="mvcard ldcard lv${LDLV[x.level] || 1} ${x.seen ? 'rkrow' : ''} ${x.lv === '유력' ? 'lk2' : ''}" ${x.seen ? `data-act="char" data-w="${(x.now || x.to).w}" data-n="${esc((x.now || x.to).n)}"` : ''}>
+      <div class="mvlv">${ldBadge(x.level)}${cfBadge(x.lv === '확실' ? 1 : 2, x.nc)}<span class="sub" style="display:inline"> ${esc(dayStr(x.d).slice(5))} 확인${x.score != null ? ` · 일치도 ${esc(x.score)}%` : ''}</span></div>
+      <div class="ldft"><div class="ldr"><span class="ldk">이전 전</span><span class="ldv">${ldPlace(x.from)}</span></div>
+        <div class="ldr"><span class="ldk">이전 후</span><span class="ldv">${ldPlace(x.to, x.from)}</span></div>
+        ${x.now && (x.now.n !== x.to.n || x.now.w !== x.to.w) ? `<div class="ldr"><span class="ldk">지금</span><span class="ldv">${esc(wName(x.now.w))} · <b>${esc(x.now.n)}</b></span></div>` : ''}</div>
+      ${fl.length ? `<div class="ldflags">${fl.map(f => `<span class="ldf">${esc(f)}</span>`).join('')}</div>` : ''}
+      <div class="ldstat">${stat(x)}</div>
+      <div class="mvf">${x.hops >= 2 ? `<span class="ldhop">이전 · 닉변 ${nf(x.hops)}회</span>` : ''}${chgTrackBtn((x.now || x.to).w, (x.now || x.to).n, x.seen)}</div></div>`;
+  };
+  const LVN = {'높음': '이전 + 닉네임 변경 + 길드나 의상까지 변경, 또는 최근 이전 · 닉네임 변경을 2번 이상', '보통': '이전 + 닉네임 변경', '낮음': '닉네임은 그대로 두고 이전 + 길드 변경'};
+  let h = `<section class="ov fr" style="margin-top:14px" id="cgld">${NODES}
+    <div class="bar"><span class="sid g">이전 세탁 의심</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(ld.length)}명 · ${esc(perLbl)}</span></div>
+    <div class="note">월드 · 서버를 옮기면서 <b>닉네임 · 길드 · 의상</b>을 바꾼 캐릭터입니다. 단계는 함께 바꾼 정도입니다.
+      ${Object.entries(LVN).map(([l, t]) => `<div class="ldn">${ldBadge(l, '')} ${t}</div>`).join('')}
+      <b class="cfb c1">확실</b> <b class="cfb c2">유력</b>은 이전 전후가 <b>같은 캐릭터라는 판정</b>의 확실도입니다 (유력: 후보가 여럿이거나 일부 값이 다름).</div>
+    <div class="kpis ldk3">${Object.keys(lc).map(l => `<div class="kpi"><div class="lb">${ldBadge(l)} (명)</div><div class="v">${nf(lc[l])}</div><div class="s">${esc(perLbl)}${CG.w ? ' · ' + esc(wName(CG.w)) : ''}</div></div>`).join('')}</div>
+    <div class="ctrls"><span class="lbl">단계</span>${seg('cg-ld', CG.ld, [['', '전체'], ['높음', '높음'], ['보통', '보통'], ['낮음', '낮음']])}<span class="ldhint">기간 · 월드 · 서버 · 찾기는 위 변경 목록과 같이 적용 (이전 전 또는 후가 맞으면 표시)</span></div>
+    ${ld.length ? `<div class="mvgrid ldgrid">${ld.slice(0, CG.ldm).map(card).join('')}</div>
+      ${ld.length > CG.ldm ? `<div class="pager"><button class="btn" data-act="cg-ldmore">더 보기 (${nf(ld.length - CG.ldm)}명 남음)</button></div>` : ''}`
+      : '<div class="empty" style="padding:14px 16px">조건에 맞는 이전 세탁 의심 캐릭터가 없습니다</div>'}
+  </section>`;
+  h += `<section class="ov fr" style="margin-top:14px" id="cggone">${NODES}
+    <div class="bar"><span class="sid g">행방 불명</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(gone.length)}명 · ${esc(perLbl)}${ch.gone_total > (ch.gone || []).length ? ` · 전체 ${nf(ch.gone_total)}명 중 최근 ${nf((ch.gone || []).length)}명만 표시` : ''}</span></div>
+    <div class="note">수집 대상에서 <b>사라졌지만 아직 이어 붙일 캐릭터를 찾지 못한</b> 캐릭터입니다. 사라진 뒤 <b>14일 동안</b> 같은 캐릭터를 계속 찾습니다. 캐릭터 삭제나 수집 기준(순위) 밖으로 밀려난 경우일 수도 있습니다.</div>
+    ${gone.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk gone"><tr><th>마지막 확인</th><th class="l">캐릭터</th><th class="cgws">월드</th><th class="cgws">서버</th><th class="l hide-s">길드</th><th class="hide-s">직업</th><th>전투력</th><th>대표 마스터리</th><th>전문화</th></tr>
+      ${gone.slice(0, CG.gom).map(x => `<tr><td class="dg" style="font-size:16px">${esc(dayStr(x.last).slice(5))}</td>
+        <td class="l"><div class="nm">${esc(x.n)}</div><div class="sub msub">${esc(wName(x.w))} ${serverLabel(x.s)}${x.g ? ' · ' + esc(x.g) : ''}</div></td>
+        <td class="cgws">${esc(wName(x.w))}</td><td class="cgws dg" style="font-size:16px">${x.s ? pad2(x.s) : '--'}</td>
+        <td class="l hide-s">${x.g ? esc(x.g) : '<span class="sub">-</span>'}</td><td class="hide-s">${esc(x.j || '--')}</td>
+        <td><span class="big" style="font-size:18px">${nf(x.bp)}</span></td><td><span class="dg" style="font-size:17px">${nf(x.ml)}</span><div class="sub">${esc(mname(x.mc))}</div></td>
+        <td><span class="dg" style="font-size:17px">${nf(x.sp)}</span></td></tr>`).join('')}</table></div>
+      ${gone.length > CG.gom ? `<div class="pager"><button class="btn" data-act="cg-gomore">더 보기 (${nf(gone.length - CG.gom)}명 남음)</button></div>` : ''}`
+      : '<div class="empty" style="padding:14px 16px">조건에 맞는 행방 불명 캐릭터가 없습니다</div>'}
+  </section>`;
+  return h;
 }
 const CGSORT = [['d', '날짜'], ['kind', '종류'], ['name', '캐릭터명'], ['world', '월드'], ['server', '서버'], ['bp', '전투력'], ['ml', '대표 마스터리'], ['sp', '전문화']];
 const CGDIR0 = {d: -1, kind: 1, name: 1, world: 1, server: 1, bp: -1, ml: -1, sp: -1};   // 처음 고를 때 방향
@@ -987,6 +1102,7 @@ async function pageChg(){
   // 연관 닉네임 추정 (참고)
   let as = (ch.assoc || []).filter(a => inP(a.d) && (inWS(a.w, a.s) || a.rel.some(r => inWS(r.w, r.s))));
   if(q) as = as.filter(a => a.n.includes(q) || a.old.includes(q) || (a.g || '').includes(q) || a.rel.some(r => r.n.includes(q) || (r.now || '').includes(q) || (r.g || '').includes(q)));
+  h += launderSecs(ch, {inP, inWS, q, perLbl});
   h += `<section class="ov fr" style="margin-top:14px" id="cgassoc">${NODES}
     <div class="bar"><span class="sid g">닉네임 연관 추정 <span class="cfb c3">참고</span></span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(as.length)}건 · ${esc(perLbl)}</span></div>
     <div class="note">닉네임을 바꾼 캐릭터의 <b>새 이름</b>이 다른 캐릭터의 이름과 비슷한 경우입니다. 예를 들어 A가 B 캐릭터를 사서 A와 관련된 이름(원래 이름, 번호만 붙인 이름 등)으로 바꾼 경우를 찾습니다.
@@ -1045,11 +1161,11 @@ function pageHelp(){
   + sec('메뉴', `
     <dl class="hdl">
       <dt>캐릭터</dt><dd>[검색]으로 찾은 캐릭터 1명의 정보 — 전투력 · 업적 · 마스터리 · 전문화 일별 그래프, 마스터리 11종 입력, 통합 레벨, 변경 내역. [화면 초기화]로 표시 중인 캐릭터와 최근 본 캐릭터를 지웁니다(추적 · 메모는 그대로).</dd>
-      <dt>길드</dt><dd>길드명으로 찾기 → 월드 · 서버별 길드 목록. 길드원 수, 신규 가입 · 탈퇴(7일/30일/전체), 평균 전투력 · 마스터리 · 전문화, 직업 구성, 길드원 표, [+ 길드원 모두 추적].</dd>
+      <dt>길드</dt><dd>길드명으로 찾기 → 월드 · 서버별 길드 목록. 길드원 수, 신규 가입 · 탈퇴(7일/30일/전체), 평균 전투력 · 마스터리 · 전문화, 직업 구성, 길드원 표, [+ 길드원 모두 추적]. 월드 · 서버를 옮긴 길드원과 행방 불명 길드원도 보여줍니다. 길드마다 <b>코멘트</b>를 남길 수 있습니다(이 브라우저에만 저장 · 백업에 포함).</dd>
       <dt>랭킹</dt><dd>대표 마스터리 또는 전투력 순위 — 전체 월드 / 월드 / 서버, 직업 필터, 닉네임 · 길드 찾기. 전문화 레벨도 함께 표시합니다.</dd>
       <dt>TOP 20</dt><dd>대표 마스터리 TOP 20과 전투력 TOP 20.</dd>
       <dt>통계</dt><dd>캐릭터 수 · 평균 · 최고, 전투력 · 마스터리 · 전문화 분포, 직업 · 무기 통계, 서버별 비교, 순위 컷.</dd>
-      <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다. 월드 · 서버 필터, 이전 닉네임으로도 찾기(지금 그 이름을 쓰는 다른 캐릭터와 구분 표시), 캐릭터를 산 뒤 관련 닉네임으로 바꾼 경우를 찾는 <b>닉네임 연관 추정(참고)</b>이 있습니다.</dd>
+      <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다. 월드 · 서버 필터, 이전 닉네임으로도 찾기(지금 그 이름을 쓰는 다른 캐릭터와 구분 표시), 캐릭터를 산 뒤 관련 닉네임으로 바꾼 경우를 찾는 <b>닉네임 연관 추정(참고)</b>, 월드 · 서버를 옮기며 닉네임 · 길드 · 의상을 바꾼 <b>이전 세탁 의심</b>과 <b>행방 불명</b> 캐릭터 목록이 있습니다.</dd>
       <dt>경험치 계산기</dt><dd>사냥 결과 창 캡처를 끌어다 놓거나 Ctrl+V로 붙여넣으면 사냥터 · 사냥 시간 · M 경험치를 읽어 1분당 · 1시간당 경험치를 기록하고, 가장 효율 좋은 사냥터를 ★로 표시합니다. 사냥터 이름 앞뒤에 잘못 읽힌 글자는 자동으로 떼어냅니다. 잘못 읽은 기록은 [수정]으로 고칠 수 있습니다.</dd>
       <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
     </dl>`)
@@ -1063,7 +1179,14 @@ function pageHelp(){
       <tr><td>전투력</td><td>−5% ~ +10%</td></tr></table>
     <ul><li><b>확실</b>: 위 항목이 모두 맞는 캐릭터가 <b>한 명뿐</b>일 때(또는 같은 서버 · 같은 길드에서 닉네임만 바뀐 경우) 같은 캐릭터로 이어 붙입니다. 이름 · 월드 · 서버가 모두 바뀌어도 찾습니다. 추적 · 메모도 새 이름으로 자동으로 옮겨집니다.</li>
       <li><b>유력</b>: 맞는 후보가 여럿이거나 일부 값이 조금 다를 때는 단정하지 않고 [변경 이력]에 유력으로만 표시합니다. 추적 중인 캐릭터라면 [추적] 화면에 후보가 나오고 [이 캐릭터로 바꾸기]로 직접 옮길 수 있습니다.</li>
-      <li>사라진 뒤 <b>7일 안</b>에 다시 나타나면 이어 붙입니다. 옮긴 곳에서 수집 기준(구월드 14만 · 신월드 500위) 밖이면 기준 안으로 들어온 날 찾습니다.</li></ul>`)
+      <li>사라진 뒤 <b>14일 안</b>에 다시 나타나면 이어 붙입니다. 옮긴 곳에서 수집 기준(구월드 14만 · 신월드 500위) 밖이면 기준 안으로 들어온 날 찾습니다.</li></ul>`)
+  + sec('월드 · 서버 이전 세탁 추적', `
+    <p>월드 · 서버를 옮기면서 닉네임 · 길드 · 의상까지 바꿔 다른 캐릭터처럼 보이게 하는 경우(세탁)를 찾아 [변경 이력]의 <b>이전 세탁 의심</b>에 보여줍니다.</p>
+    <ul><li>위 비교 항목에 더해 <b>의상(코스튬)</b> 정보도 비교합니다.</li>
+      <li>사라진 캐릭터는 <b>14일 동안</b> 옮긴 곳을 찾습니다. 수집 기준 밖으로 옮겨도 새로 나타난 캐릭터는 <b>모두</b> 비교합니다.</li>
+      <li>한 번 이전이 확인된 캐릭터는 <b>30일 동안</b> 수집 기준과 관계없이 계속 수집합니다.</li>
+      <li>세탁 의심 단계: ${ldBadge('높음', '')} 이전 + 닉네임 변경 + 길드나 의상까지 변경, 또는 최근 이전 · 닉네임 변경을 2번 이상 · ${ldBadge('보통', '')} 이전 + 닉네임 변경 · ${ldBadge('낮음', '')} 닉네임은 그대로 두고 이전 + 길드 변경. 이전만 하고 아무것도 안 바꾼 캐릭터는 넣지 않습니다. 확실 / 유력은 같은 캐릭터라는 판정의 확실도입니다.</li>
+      <li><b>행방 불명</b>: 사라졌지만 14일 안에 같은 캐릭터를 아직 찾지 못한 캐릭터입니다. 삭제됐거나 순위 밖으로 밀려난 경우일 수도 있습니다.</li></ul>`)
   + sec('알아둘 점', `
     <ul><li>추적 · 메모 · 마스터리 입력 · 경험치 기록은 <b>이 브라우저에만</b> 저장됩니다. 다른 기기로 옮기려면 [캐릭터] · [추적] 아래 [백업 저장] / [백업 불러오기]를 쓰세요.</li>
       <li>같은 월드 안 닉네임 변경은 직업 · 업적점수 · 길드 · 서버가 거의 같을 때만 자동으로 연결합니다(잘못 연결 방지). 못 따라가면 [추적]의 [닉네임/월드]로 직접 바꾸세요.</li>
@@ -1513,20 +1636,20 @@ async function addWorlds(){
   return (D.meta?.worlds || []).map(w => [w.code, w.name]);
 }
 let SMODE = 'char';
+// 검색 결과 (모든 월드에서 한 번에 찾고, 월드 · 서버로 좁힘)
+const SR = {q: '', hits: [], w: 0, s: 0, lim: 100, tok: 0};
 async function setSearchMode(m){
-  SMODE = m;
+  SMODE = m; SR.tok++;
   $('#sTab').querySelectorAll('[data-st]').forEach(b => b.classList.toggle('on', b.dataset.st === m));
   $('#sLabel').textContent = m === 'guild' ? '길드명' : '캐릭터 명';
   $('#addName').placeholder = m === 'guild' ? '예: 별빛' : '예: 스타일러';
   $('#sHint').innerHTML = NB(m === 'guild'
-    ? '길드명을 입력하고 [찾기] → 월드 · 서버 · 인원이 표시된 목록에서 길드를 누르면 [길드]에 정보가 표시됩니다.<br>' + critText() + '입니다.'
-    : critText().replace(' 기준', '') + ' 캐릭터만 검색됩니다.<br>' + '캐릭터 명 일부만 입력하고 [찾기] → 캐릭터를 누르면 [캐릭터]에 표시됩니다.');
-  $('#addWorld').closest('.f').hidden = m === 'guild';
-  const prev = $('#addWorld').value;
-  const ws = m === 'guild' ? [[0, '전체 월드']].concat(readyWorlds().map(w => [w.code, w.name])) : await addWorlds();
-  $('#addWorld').innerHTML = ws.map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join('');
-  if(m === 'char' && ws.some(w => String(w[0]) === prev)) $('#addWorld').value = prev;
+    ? '모든 월드에서 한 번에 찾습니다. 길드명을 입력하고 [찾기] → 월드 · 서버로 좁힌 뒤 길드를 누르면 [길드]에 정보가 표시됩니다.<br>' + critText() + '입니다.'
+    : '모든 월드에서 한 번에 찾습니다. 캐릭터 명 일부만 입력하고 [찾기] → 월드 · 서버로 좁힌 뒤 캐릭터를 누르면 [캐릭터]에 표시됩니다.<br>' + critText().replace(' 기준', '') + ' 캐릭터만 검색됩니다.');
+  SR.q = ''; SR.hits = []; SR.w = 0; SR.s = 0; SR.lim = 100;
+  $('#sFil').hidden = true; $('#sFil').innerHTML = '';
   $('#cands').innerHTML = m === 'guild' && !readyWorlds().length ? '<span style="color:var(--dim);font-size:12px">길드 검색은 전체 수집 데이터가 있어야 합니다 — 첫 수집이 끝나면 쓸 수 있습니다.</span>' : '';
+  if($('#addName').value.trim()) await findNames();
   $('#addName').focus();
 }
 async function openAdd(mode){
@@ -1538,32 +1661,63 @@ async function openAdd(mode){
   await setSearchMode(mode || 'char');
   $('#dlgAdd').showModal(); $('#addName').focus();
 }
+const SEMPTY = t => `<span style="color:var(--dim);font-size:12px">${t}</span>`;
 async function findNames(){
   const q = $('#addName').value.trim(); if(!q) return;
-  if(SMODE === 'guild'){
-    const hits = await findGuilds(q);
-    $('#cands').innerHTML = hits.length ? hits.slice(0, 40).map(g => `<button type="button" data-g="${esc(g.k)}"><b>${esc(g.g)}</b> <small style="color:var(--dim)">${esc(gLabel(g))} · ${nf(g.rows.length)}명 · 평균 ${krShort(g.avg)}</small></button>`).join('')
-      : '<span style="color:var(--dim);font-size:12px">찾는 길드가 없습니다 — 길드원이 모두 수집 기준 밖이면 검색되지 않습니다.</span>';
-    return;
-  }
+  const tok = ++SR.tok, mode = SMODE;   // 늦게 온 이전 검색 결과가 새 결과를 덮지 않도록
+  SR.q = q; SR.w = 0; SR.s = 0; SR.lim = 100; SR.hits = [];
+  $('#sFil').hidden = true;
   $('#cands').innerHTML = '<span class="spin"></span>찾는 중';
   try{
-    const wc = Number($('#addWorld').value);
-    if(D.local){
-      try{
-        const r = await localApi('api/names?world=' + wc + '&q=' + encodeURIComponent(q));
-        const ready = readyWorlds().some(w => w.code === wc) ? await world(wc).catch(() => null) : null;
-        $('#cands').innerHTML = r.names.length ? r.names.map(n => { const x = ready?.byName.get(n);
-          return `<button type="button" data-n="${esc(n)}">${esc(n)}${x ? ` <small style="color:var(--dim)">${serverLabel(x[C.s])} · ${esc(x[C.g] || '길드 없음')} · ${krShort(x[C.bp])}</small>` : ''}</button>`; }).join('')
-          : '<span style="color:var(--dim);font-size:12px">후보 없음 — 수집 기준 밖이면 검색되지 않습니다.</span>';
-        return;
-      }catch(e){ if(!readyWorlds().some(w => w.code === wc)) throw e; }
+    if(SMODE === 'guild'){
+      const gh = (await findGuilds(q)).map(g => ({w: g.w, s: g.s, g}));
+      if(tok !== SR.tok || mode !== SMODE) return;
+      SR.hits = gh;
+    } else {
+      // 1) 수집 데이터 (준비된 모든 월드)
+      const hits = [];
+      for(const j of await allWorlds()) for(const r of j.rows) if(r[C.n].includes(q)) hits.push({w: r[C.w], s: r[C.s], n: r[C.n], r});
+      hits.sort((a, b) => (b.r[C.bp] || 0) - (a.r[C.bp] || 0));
+      // 2) 내 PC
+      if(D.local){
+        // 수집 기준 밖 캐릭터도 찾도록 모든 월드를 사이트에서 이름만 실시간 조회해 수집 데이터에 없는 이름을 덧붙임
+        const have = new Set(hits.map(x => key(x.w, x.n)));
+        const rest = (await addWorlds()).map(w => Number(w[0]));
+        const got = await Promise.all(rest.map(wc => localApi('api/names?world=' + wc + '&q=' + encodeURIComponent(q)).then(r => [wc, r.names || []]).catch(() => [wc, null])));
+        if(!hits.length && got.length && got.every(([, l]) => l === null)) throw new Error('게임 사이트에 연결할 수 없습니다');
+        for(const [wc, l] of got) for(const n of l || []) if(!have.has(key(wc, n))) hits.push({w: wc, s: 0, n, r: null});
+      }
+      if(tok !== SR.tok || mode !== SMODE) return;
+      SR.hits = hits;
     }
-    const j = await world(wc);
-    const hits = j.rows.filter(r => r[C.n].includes(q)).slice(0, 40);
-    $('#cands').innerHTML = hits.length ? hits.map(r => `<button type="button" data-n="${esc(r[C.n])}">${esc(r[C.n])} <small style="color:var(--dim)">${serverLabel(r[C.s])} · ${esc(r[C.g] || '길드 없음')} · ${krShort(r[C.bp])}</small></button>`).join('')
-      : '<span style="color:var(--dim);font-size:12px">후보 없음 — 수집 기준 밖이면 검색되지 않습니다.</span>';
-  }catch(e){ $('#cands').textContent = '오류: ' + e.message; }
+    drawCands();
+  }catch(e){ if(tok === SR.tok) $('#cands').textContent = '오류: ' + e.message; }
+}
+function drawCands(){
+  const all = SR.hits, guild = SMODE === 'guild';
+  if(!all.length){
+    $('#sFil').hidden = true;
+    $('#cands').innerHTML = SEMPTY(guild ? '찾는 길드가 없습니다 — 길드원이 모두 수집 기준 밖이면 검색되지 않습니다.' : '후보 없음 — 수집 기준 밖이면 검색되지 않습니다.');
+    return;
+  }
+  // 월드별 · 서버별 개수
+  const wc = new Map(); for(const x of all) wc.set(x.w, (wc.get(x.w) || 0) + 1);
+  if(SR.w && !wc.has(SR.w)){ SR.w = 0; SR.s = 0; }
+  const inW = all.filter(x => !SR.w || x.w === SR.w);
+  const sc = new Map(); if(SR.w) for(const x of inW) if(x.s) sc.set(x.s, (sc.get(x.s) || 0) + 1);
+  if(SR.s && !sc.has(SR.s)) SR.s = 0;
+  const view = inW.filter(x => !SR.s || x.s === SR.s);
+  const order = [...wc.keys()].sort((a, b) => wc.get(b) - wc.get(a) || a - b);
+  const chip = (attr, v, cur, label, n) => `<button type="button" class="chip ${v === cur ? 'on' : ''}" ${attr}="${v}">${esc(label)} <small>${nf(n)}</small></button>`;
+  $('#sFil').innerHTML = NB(`<div class="sfr"><span class="lbl">월드</span><div class="chips">${chip('data-sw', 0, SR.w, '전체', all.length)}${order.map(w => chip('data-sw', w, SR.w, wName(w), wc.get(w))).join('')}</div></div>`
+    + (SR.w && sc.size ? `<div class="sfr"><span class="lbl">서버</span><div class="chips">${chip('data-ss', 0, SR.s, '전체', inW.length)}${[...sc.keys()].sort((a, b) => a - b).map(s => chip('data-ss', s, SR.s, serverLabel(s), sc.get(s))).join('')}</div></div>` : ''));
+  $('#sFil').hidden = false;
+  const gn = ST.gnote || {};
+  const item = guild
+    ? x => { const g = x.g, nc = (gn[g.k] || []).length; return `<button type="button" data-g="${esc(g.k)}"><b>${esc(g.g)}</b> <small style="color:var(--dim)">${esc(gLabel(g))} · ${nf(g.rows.length)}명 · 평균 ${krShort(g.avg)}</small>${nc ? `<span class="cfb c3">코멘트 ${nc}</span>` : ''}</button>`; }
+    : x => `<button type="button" data-w="${x.w}" data-n="${esc(x.n)}">${esc(x.n)} <small style="color:var(--dim)">${esc(wName(x.w))}${x.r ? ` ${serverLabel(x.r[C.s])} · ${esc(x.r[C.g] || '길드 없음')} · ${krShort(x.r[C.bp])}` : ' · 수집 데이터에 없음 (누르면 사이트에서 조회)'}</small></button>`;
+  $('#cands').innerHTML = NB(view.slice(0, SR.lim).map(item).join('')
+    + (view.length > SR.lim ? `<button type="button" class="smore" data-more="1">더 보기 (${nf(view.length - SR.lim)}${guild ? '개' : '명'} 남음)</button>` : ''));
 }
 function cardOf(k){ return CARDS.find(c => c.k === k); }
 function openMastery(k){
@@ -1718,13 +1872,16 @@ document.addEventListener('click', async ev => {
     else if(act === 'rk-by'){ RK.by = b.dataset.v; RK.page = 0; lsSet('l9rank', JSON.stringify({by: RK.by})); render(); }
     else if(act === 'top-tab'){ TOPTAB = b.dataset.v; lsSet('l9toptab', TOPTAB); await render(); }
     else if(act === 'my-reset'){ ST.cur = null; ST.recent = []; saveSession(); await render(); window.scrollTo({top: 0}); toast('캐릭터 화면을 초기화했습니다 (추적 · 메모는 그대로)'); }
-    else if(act === 'cg-per'){ CG.per = Number(b.dataset.v); CG.page = 0; CG.mv = 24; saveCG(); await render(); }
+    else if(act === 'cg-per'){ CG.per = Number(b.dataset.v); CG.page = 0; CG.mv = 24; CG.ldm = 24; CG.gom = 50; saveCG(); await render(); }
     else if(act === 'cg-sorth'){ if(CG.sort === b.dataset.v) CG.dir = -(CG.dir || -1); else { CG.sort = b.dataset.v; CG.dir = CGDIR0[CG.sort] || -1; } CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-dir'){ CG.dir = -(CG.dir || -1); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-cf'){ CG.cf = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-kind'){ CG.kind = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-page'){ CG.page = Math.max(0, Number(b.dataset.p)); await render(); document.getElementById('cglist')?.scrollIntoView({block: 'start'}); }
     else if(act === 'cg-more'){ CG.mv += 24; await render(); }
+    else if(act === 'cg-ld'){ CG.ld = b.dataset.v; CG.ldm = 24; saveCG(); await render(); }
+    else if(act === 'cg-ldmore'){ CG.ldm += 24; await render(); }
+    else if(act === 'cg-gomore'){ CG.gom += 50; await render(); }
     else if(act === 'rk-page'){ RK.page = Math.max(0, Number(b.dataset.p)); await render(); window.scrollTo({top: $('#main').offsetTop - 10}); }
     else if(act === 'rk-goto'){ const i = Number(b.dataset.i); RK.q = ''; RK.page = Math.floor(i / PAGE); await render(); document.getElementById('rk-' + i)?.scrollIntoView({block:'center'}); }
     else if(act === 'track'){ ev.stopPropagation(); track(b.dataset.w, b.dataset.n); }
@@ -1733,6 +1890,11 @@ document.addEventListener('click', async ev => {
     else if(act === 'g-open'){ GS.sel = k; saveGS(); await render(); $('#gdetail')?.scrollIntoView({behavior:'smooth', block:'start'}); }
     else if(act === 'g-reset'){ GS.q = ''; GS.sel = null; saveGS(); await render(); $('#gq')?.focus(); }
     else if(act === 'g-per'){ GS.per = Number(b.dataset.v); saveGS(); render(); }
+    else if(act === 'gc-add'){ if(addGComment(k)){ await render(); toast('코멘트를 추가했습니다'); } }
+    else if(act === 'gc-del'){
+      const l = ST.gnote?.[k] || [], c = l.find(x => x.id === b.dataset.id);
+      if(c && confirm(`이 코멘트를 삭제할까요?\n\n${c.t.slice(0, 80)}`)){ ST.gnote[k] = l.filter(x => x !== c); if(!ST.gnote[k].length) delete ST.gnote[k]; saveStore(); await render(); toast('코멘트를 삭제했습니다'); }
+    }
     else if(act === 'g-trackall'){
       const g = (await guildIndex()).get(k); if(!g) return;
       const add = g.rows.filter(r => !isTracked(r));
@@ -1802,14 +1964,15 @@ document.addEventListener('change', e => {
   else if(t === 'tr-g'){ TRF.g = e.target.value; saveTRF(); render(); }
   else if(t === 'tr-w'){ TRF.w = Number(e.target.value); saveTRF(); render(); }
   else if(t === 'tr-sort'){ TRF.sort = e.target.value; saveTRF(); render(); }
-  else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.s = 0; CG.page = 0; CG.mv = 24; saveCG(); render(); }
+  else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.s = 0; CG.page = 0; CG.mv = 24; CG.ldm = 24; CG.gom = 50; saveCG(); render(); }
   else if(t === 'cg-sort'){ CG.sort = e.target.value; CG.dir = CGDIR0[CG.sort] || -1; CG.page = 0; saveCG(); render(); }
-  else if(t === 'cg-s'){ CG.s = Number(e.target.value); CG.page = 0; CG.mv = 24; saveCG(); render(); }
+  else if(t === 'cg-s'){ CG.s = Number(e.target.value); CG.page = 0; CG.mv = 24; CG.ldm = 24; CG.gom = 50; saveCG(); render(); }
 });
 let QT = null;
 document.addEventListener('input', e => {
   if(e.target.dataset?.in === 'tr-q'){ TRF.q = e.target.value; saveTRF(); clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.dataset?.in === 'cg-q'){ CG.q = e.target.value; CG.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
+  if(e.target.id === 'gcmText') GCD[e.target.dataset.gk] = e.target.value;
   if(e.target.dataset?.in === 'rk-q'){ RK.q = e.target.value; RK.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   const mk = e.target.dataset?.memo;
   if(mk){ const t = ST.tracked.find(x => key(x.w, x.n) === mk); if(t){ t.memo = e.target.value; document.querySelectorAll(`[data-memo="${CSS.escape(mk)}"]`).forEach(x => { if(x !== e.target) x.value = t.memo; }); clearTimeout(MT); MT = setTimeout(saveStore, 300); } }
@@ -1819,6 +1982,7 @@ document.addEventListener('keydown', e => {
   const m = e.target.closest && e.target.closest('.m[data-act="medit"]');
   if(m && e.target === m && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); startMEdit(m); }
   if(e.key === 'Enter' && e.target.closest?.('.efields,.tsplit')){ e.preventDefault(); expSave(); }
+  if(e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.id === 'gcmText'){ e.preventDefault(); document.querySelector('[data-act="gc-add"]')?.click(); }
   if(e.key === 'Enter' && e.target.id === 'gq'){ e.preventDefault(); document.querySelector('[data-act="g-find"]')?.click(); }
 });
 window.addEventListener('hashchange', () => { window.scrollTo({top: 0}); render(); });
@@ -1847,13 +2011,19 @@ $('#fileBackup').addEventListener('change', async e => {
 $('#btnFind').onclick = findNames;
 $('#addName').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); findNames(); } });
 $('#sTab').addEventListener('click', e => { const b = e.target.closest('[data-st]'); if(b) setSearchMode(b.dataset.st); });
+$('#sFil').addEventListener('click', e => {
+  const b = e.target.closest('[data-sw],[data-ss]'); if(!b) return;
+  if(b.dataset.sw !== undefined){ SR.w = Number(b.dataset.sw); SR.s = 0; } else SR.s = Number(b.dataset.ss);
+  SR.lim = 100; drawCands(); $('#cands').scrollTop = 0; });
 $('#cands').addEventListener('click', e => {
+  if(e.target.closest('[data-more]')){ SR.lim += 100; drawCands(); return; }
   const gb = e.target.closest('[data-g]');
   if(gb){ openGuild(gb.dataset.g); $('#dlgAdd').close(); return; }
   const b = e.target.closest('[data-n]'); if(!b) return;
-  setCur(Number($('#addWorld').value), b.dataset.n); $('#dlgAdd').close();
+  const w = Number(b.dataset.w), n = b.dataset.n;
+  setCur(w, n); $('#dlgAdd').close();
   if(route() !== 'my') location.hash = '#my'; else { render(); window.scrollTo({top: 0}); }
-  if(D.local) quickRun([[Number($('#addWorld').value), b.dataset.n]]); });
+  if(D.local) quickRun([[w, n]]); });
 $('#btnMOk').onclick = async () => {
   const k = $('#dlgM').dataset.k, d = $('#mDate').value || todayKST();
   const c = cardOf(k); let n = 0;
@@ -1938,7 +2108,7 @@ async function importLegacy(){
   }
   // 30분마다 새 데이터 확인 (입력 중이면 건너뜀)
   setInterval(async () => {
-    if(document.querySelector('dialog[open]') || document.querySelector('.m.editing') || document.activeElement?.tagName === 'INPUT') return;
+    if(document.querySelector('dialog[open]') || document.querySelector('.m.editing') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
     const old = D.meta?.generated; await loadMeta(); await loadQuick(); if(D.meta?.generated !== old) render();
   }, 30 * 60e3);
 })();

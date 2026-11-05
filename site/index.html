@@ -12,7 +12,7 @@
 <title>로드나인 캐릭터 추적기</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/galmuri@2.40.3/dist/galmuri.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/vt323@5.2.7/index.css">
-<link rel="stylesheet" href="style.css?v=1.0.1">
+<link rel="stylesheet" href="style.css?v=1.1.0">
 </head>
 <body>
 <div class="vign"></div>
@@ -79,9 +79,9 @@
   <div class="db">
     <div class="seg stab" id="sTab"><button type="button" data-st="char" class="on">캐릭터</button><button type="button" data-st="guild">길드</button></div>
     <p class="hint2" id="sHint"></p>
-    <div class="f"><label>월드</label><select id="addWorld"></select></div>
     <div class="f"><label id="sLabel">캐릭터 명</label>
       <div class="rowf"><input id="addName" autocomplete="off" placeholder="예: 스타일러"><button type="button" class="btn" id="btnFind">찾기</button></div></div>
+    <div class="sfil" id="sFil" hidden></div>
     <div class="cands" id="cands"></div>
   </div>
   <div class="df"><button class="btn" value="cancel" formnovalidate>닫기</button></div>
@@ -121,6 +121,6 @@
 <input type="file" id="fileShot" accept="image/*" multiple hidden>
 <button class="totop" id="toTop" title="맨 위로" aria-label="맨 위로">▲<span>TOP</span></button>
 <div class="toast" id="toast"></div>
-<script src="app.js?v=1.0.1"></script>
+<script src="app.js?v=1.1.0"></script>
 </body>
 </html>
