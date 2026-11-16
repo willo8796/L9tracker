@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.4.0';
+const VERSION = '1.4.1';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -17,7 +17,22 @@ const DEFAULT_MASTERIES = [['Mastery_Hand','맨손'],['Mastery_Sword','검과 �
 
 /* ------------------------------------------------------------ 저장소 (이 브라우저에만 저장) */
 const SKEY = 'l9tracker.v6';
-function freshStore(){ return {v:1, tracked:[], mastery:{}, integ:{}, imported:false, expr:[], gnote:{}}; }
+function freshStore(){ return {v:1, tracked:[], mastery:{}, integ:{}, imported:false, expr:[], gnote:{}, memos:{}}; }
+// v1.4.0: 캐릭터 메모 — 추적 중이면 tracked[].memo, 아니면 memos['월드|이름'] (추적 추가 · 해제 때 서로 옮김)
+function memoGet(k){ const t = ST.tracked.find(x => key(x.w, x.n) === k); return t ? (t.memo || '') : ((ST.memos || {})[k] || ''); }
+function memoSet(k, v){
+  v = String(v || '').slice(0, 20000);
+  const t = ST.tracked.find(x => key(x.w, x.n) === k);
+  if(!ST.memos) ST.memos = {};
+  if(t){ if(v.trim()) t.memo = v; else delete t.memo; delete ST.memos[k]; }
+  else if(v.trim()) ST.memos[k] = v; else delete ST.memos[k];
+}
+function memoMoveOut(t){ if(t && t.memo && t.memo.trim()){ if(!ST.memos) ST.memos = {}; ST.memos[key(t.w, t.n)] = t.memo; } }
+function memoBox(k, rows, label){
+  const v = memoGet(k);
+  return `<div class="tmemo-box"><label>${label || '메모'}</label><div class="memo-in"><textarea class="memo" maxlength="20000" data-memo="${esc(k)}" rows="${rows || 2}" placeholder="이 캐릭터에 대한 메모 (이 브라우저에만 저장 · Ctrl+Enter로 등록)">${esc(v)}</textarea>
+    <div class="memo-bar"><span class="memo-st" data-memost="${esc(k)}">${v ? '등록됨' : ''}</span><button type="button" class="btn pri memo-save" data-act="memo-save" data-k="${esc(k)}">등록</button></div></div></div>`;
+}
 // v0.9.9: 즐겨찾기 기능 삭제 → 메모가 있던 즐겨찾기는 추적 캐릭터 메모로 옮김 (추적 안 하던 캐릭터는 추적에 추가)
 function migrateFav(){
   const fs = ST.fav; if(!fs) return false;
@@ -83,6 +98,14 @@ function cleanStore(j){
       .map(x => ({id: x.id, t: x.t.slice(0, 20000), at: x.at}));
     gnTotal += out.gnote[k].length;
   }
+  if(isObj(j.memos)){
+    let n = 0;
+    for(const [k, v] of Object.entries(j.memos)){
+      if(n >= LIM.tracked){ drop++; break; }
+      if(typeof k !== 'string' || !/^\d{1,4}\|[^|\u0000-\u001f]{1,40}$/.test(k) || typeof v !== 'string' || SUR_RE.test(k)){ drop++; continue; }
+      if(v.trim()){ out.memos[k] = v.slice(0, 20000); n++; }
+    }
+  }
   if(Array.isArray(j.calib)) out.calib = j.calib.filter(x => isObj(x) && isStr(x.k, 80) && inR(x.sum, 0, 11000) && inR(x.v, 0, 10000)).slice(0, LIM.calib).map(x => ({k: x.k, sum: x.sum, v: x.v}));
   if(isObj(j.lvc)){
     const w = {};
@@ -106,6 +129,15 @@ function loadStore(){
   return freshStore();
 }
 let ST = loadStore(); migrateFav();
+function memoSaveFrom(el){
+  const box = el.closest('.memo-in'), ta = box?.querySelector('textarea[data-memo]'); if(!ta) return;
+  const k = ta.dataset.memo; memoSet(k, ta.value); saveStore();
+  const v = memoGet(k);
+  document.querySelectorAll(`[data-memo="${CSS.escape(k)}"]`).forEach(x => { if(x !== ta) x.value = v; });
+  document.querySelectorAll(`[data-memost="${CSS.escape(k)}"]`).forEach(x => { x.textContent = v ? '등록됨' : ''; x.classList.remove('dirty'); });
+  toast(v ? '메모를 등록했습니다' : '메모를 지웠습니다');
+}
+document.addEventListener('keydown', e => { if((e.ctrlKey || e.metaKey) && e.key === 'Enter' && e.target?.dataset?.memo){ e.preventDefault(); memoSaveFrom(e.target); } });
 function persisted(){ const o = Object.assign({}, ST); delete o.cur; delete o.recent; return o; }
 function saveStore(){
   try{ localStorage.setItem(SKEY, JSON.stringify(persisted())); }catch(e){ if(!SYNC.on) toast('브라우저에 저장하지 못했습니다 — [백업 저장]으로 보관하세요'); }
@@ -502,8 +534,7 @@ function subject(c, idx, mode){
     </div>
     <div class="dots" title="검색됨 · 일별 기록 · 통합 레벨"><i class="${ok ? 'on' : ''}"></i><i class="${c.series.length ? 'on' : ''}"></i><i class="${it ? 'on' : ''}"></i></div>
   </div>`;
-  const tm = ST.tracked.find(t => key(t.w, t.n) === c.k);
-  if(tm) h += `<div class="tmemo-box"><label>메모</label><textarea class="memo" maxlength="20000" data-memo="${esc(c.k)}" rows="2" placeholder="이 캐릭터에 대한 메모 (입력하면 자동 저장 · 이 브라우저에만 저장)">${esc(tm.memo || '')}</textarea></div>`;
+  h += memoBox(c.k, 2);
   if((D.meta || D.quick) && !ok) h += `<div class="alert" data-miss="${esc(c.k)}">${esc(wName(c.t.w))}에서 검색되지 않습니다 — ${CRIT_SHORT()} 밖이거나 닉네임 변경·월드 이전 가능성 <span class="cands-msg"></span></div>`;
   const useEst = c.est && (!it || (c.mLast && c.mLast > it.d));
   const shown = useEst ? {l: c.est.l, p: c.est.p, d: c.mLast} : it;
@@ -667,13 +698,14 @@ function alignTrBar(){
   if(!bar || !tbl) return;
   // 버튼 3개를 가장 넓은 버튼 너비로 통일
   const bs = [...bar.querySelectorAll('.btn')]; bs.forEach(x => x.style.width = '');
-  const w = Math.max(...bs.map(x => x.getBoundingClientRect().width)); bs.forEach(x => x.style.width = Math.ceil(w) + 'px');
+  const Z = window.L9_ZOOM || 1;   // 화면 비율(fit.js) — 화면 좌표를 CSS 크기로 바꿀 때 나눔
+  const w = Math.max(...bs.map(x => x.offsetWidth)); bs.forEach(x => x.style.width = Math.ceil(w) + 'px');
   // 목록의 [해제] 버튼을 [모두 해제] 가운데로
   const btn = bar.querySelector('[data-act=tr-delall]'), row = tbl.querySelector('[data-act=del]');
   if(!btn || !row) return;
   const cell = row.closest('td'), cur = parseFloat(getComputedStyle(cell).paddingRight) || 0;
   const b = btn.getBoundingClientRect(), r = row.getBoundingClientRect();
-  const diff = (r.left + r.right) / 2 - (b.left + b.right) / 2;
+  const diff = ((r.left + r.right) / 2 - (b.left + b.right) / 2) / Z;
   if(Math.abs(diff) > .5) tbl.style.setProperty('--delpad', Math.max(0, cur + diff) + 'px');
 }
 window.addEventListener('resize', () => alignTrBar());
@@ -943,7 +975,7 @@ async function charDialog(w, n){
       ${kv('마스터리 랭크', '#' + nf(r[C.mr]), 'dg')}${kv('전투력', nf(r[C.bp]), 'dg')}
       ${kv('전투력 순위', `월드 <b class="dg">#${nf(r[C.bwr])}</b> · 서버 <b class="dg">#${nf(r[C.bsr])}</b>`)}
       ${kv('업적점수', nf(r[C.ach]), 'dg')}${kv('전문화', nf(r[C.sp]), 'dg')}</div>
-    ${tm ? `<div class="f" style="margin:14px 0 0"><label>추적 메모</label><textarea class="memo" maxlength="20000" data-memo="${esc(key(w, n))}" rows="3" placeholder="메모 입력 (자동 저장)">${esc(tm.memo || '')}</textarea></div>` : ''}`;
+    <div style="margin:14px 0 0">${memoBox(key(w, n), 3)}</div>`;
   showDlg(`<b class="cname">${esc(n)}</b> <small>${esc(got.date || '')} 기준</small>`, html, [
     {id:'main', label:'캐릭터에서 보기', run:() => { $('#dlgAdd').open && $('#dlgAdd').close(); setCur(w, n); if(route() !== 'my') location.hash = '#my'; else render(); }},
     tracked ? {id:'go', label:'추적에서 보기', pri:true, run:() => { TRSEL = key(w, n); lsSet('l9trsel', TRSEL); setTrTab('detail'); location.hash = '#track'; }}
@@ -953,7 +985,8 @@ function track(w, n){
   w = Number(w);
   if(ST.tracked.some(t => t.w === w && t.n === n)){ toast('이미 추적 중입니다'); return; }
   if(ST.tracked.length >= LIM.tracked){ toast(`추적은 최대 ${LIM.tracked}명까지입니다`); return; }
-  ST.tracked.push({w, n, added: todayKST(), ev: []}); saveStore();
+  const mk = key(w, n), mo = (ST.memos || {})[mk];
+  ST.tracked.push(Object.assign({w, n, added: todayKST(), ev: []}, mo ? {memo: mo} : {})); if(mo) delete ST.memos[mk]; saveStore();
   toast(`${n} 추적을 시작합니다 — [추적]에서 관리합니다`);
   if(D.local) quickRun([[w, n]], true); else render();
 }
@@ -1621,7 +1654,7 @@ function lvChart(){
   const vl = el('line', {y1: m.t, y2: H - m.b, stroke: dim, visibility: 'hidden'}, svg);
   const dots = SER.map(s => el('circle', {r: 4, fill: s.c, visibility: 'hidden'}, svg));
   const ov = el('rect', {x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent'}, svg);
-  const move = e => { const r = svg.getBoundingClientRect(), cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  const move = e => { const r = svg.getBoundingClientRect(), cx = ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) * (W / (r.width || W));
     const d = Math.max(-20, Math.min(20, Math.round((cx - m.l) / (W - m.l - m.r) * 40 - 20))), a = lvAdj(d);
     vl.setAttribute('x1', x(d)); vl.setAttribute('x2', x(d)); vl.setAttribute('visibility', 'visible');
     SER.forEach((s, i) => { dots[i].setAttribute('cx', x(d)); dots[i].setAttribute('cy', y(a[s.k])); dots[i].setAttribute('visibility', 'visible'); });
@@ -2373,9 +2406,11 @@ document.addEventListener('click', async ev => {
     else if(act === 'del'){
       const c = cardOf(k);
       if(c && confirm(`${c.t.n} 추적을 해제할까요? (직접 입력한 마스터리 기록은 남습니다)`)){
-        ST.tracked = ST.tracked.filter(t => key(t.w, t.n) !== k); saveStore(); await render(); toast('추적을 해제했습니다');
+        memoMoveOut(ST.tracked.find(t => key(t.w, t.n) === k));
+        ST.tracked = ST.tracked.filter(t => key(t.w, t.n) !== k); saveStore(); await render(); toast('추적을 해제했습니다 (메모는 남습니다)');
       }
     }
+    else if(act === 'memo-save'){ memoSaveFrom(b); }
     else if(act === 'ovk'){ OVK = b.dataset.v; render(); }
     else if(act === 'backup') download(`로드나인_추적기_백업_${todayKST()}.json`, JSON.stringify(ST, null, 1), 'application/json');
     else if(act === 'restore') $('#fileBackup').click();
@@ -2439,8 +2474,9 @@ document.addEventListener('click', async ev => {
     else if(act === 'tr-delsel' || act === 'tr-delall'){
       const keys = act === 'tr-delall' ? ST.tracked.map(t => key(t.w, t.n)) : [...TRCHK];
       if(!keys.length) return;
-      if(!confirm(act === 'tr-delall' ? `추적 중인 ${keys.length}명을 모두 해제할까요?\n(직접 입력한 마스터리·통합 레벨 기록은 남습니다)` : `선택한 ${keys.length}명의 추적을 해제할까요?\n(직접 입력한 마스터리·통합 레벨 기록은 남습니다)`)) return;
+      if(!confirm(act === 'tr-delall' ? `추적 중인 ${keys.length}명을 모두 해제할까요?\n(직접 입력한 마스터리·통합 레벨 기록과 메모는 남습니다)` : `선택한 ${keys.length}명의 추적을 해제할까요?\n(직접 입력한 마스터리·통합 레벨 기록과 메모는 남습니다)`)) return;
       const ks = new Set(keys);
+      for(const t of ST.tracked) if(ks.has(key(t.w, t.n))) memoMoveOut(t);
       ST.tracked = ST.tracked.filter(t => !ks.has(key(t.w, t.n))); TRCHK.clear(); saveStore();
       if(D.local) localApi('api/tracked', {chars: ST.tracked.map(t => [t.w, t.n])}).catch(() => {});
       await render(); toast(`${keys.length}명의 추적을 해제했습니다`);
@@ -2508,7 +2544,7 @@ document.addEventListener('input', e => {
   if(e.target.id === 'gcmText') GCD[e.target.dataset.gk] = e.target.value;
   if(e.target.dataset?.in === 'rk-q'){ RK.q = e.target.value; RK.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   const mk = e.target.dataset?.memo;
-  if(mk){ const t = ST.tracked.find(x => key(x.w, x.n) === mk); if(t){ t.memo = e.target.value; document.querySelectorAll(`[data-memo="${CSS.escape(mk)}"]`).forEach(x => { if(x !== e.target) x.value = t.memo; }); clearTimeout(MT); MT = setTimeout(saveStore, 300); } }
+  if(mk){ const st = e.target.closest('.memo-in')?.querySelector('.memo-st'); if(st){ const dirty = e.target.value !== memoGet(mk); st.textContent = dirty ? '등록 안 됨' : (e.target.value ? '등록됨' : ''); st.classList.toggle('dirty', dirty); } }
 });
 let MT = null;
 document.addEventListener('keydown', e => {

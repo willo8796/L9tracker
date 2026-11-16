@@ -1020,15 +1020,38 @@ mark.ldc{background:rgba(255,200,97,.22);color:var(--hi);padding:0 2px}
 .trmode a,.trwins a{color:var(--hi)}
 
 /* v1.4.0 — 입장 화면 */
-.gate{max-width:360px;margin:12vh auto 0;padding:26px 24px 20px;position:relative}
+body.gatepage{display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));box-sizing:border-box}
+.gate{width:100%;max-width:380px;margin:0;padding:26px 24px 20px;position:relative;box-sizing:border-box}
 .gate-id{display:flex;align-items:center;gap:10px;margin-bottom:20px}
 .gate form{display:flex;flex-direction:column;gap:10px}
 .gate-lbl{font-size:13px;color:var(--dim)}
 .gate-pin{font:inherit;font-family:"VT323",monospace;font-size:32px;letter-spacing:12px;text-align:center;padding:8px 10px;background:rgba(var(--c),.06);border:1px solid var(--line2);color:var(--hi)}
 .gate-pin:focus{outline:1px solid var(--hi)}
-.gate-keep{font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer}
+.gate-keep{font-size:13px;display:flex;align-items:center;justify-content:flex-start;gap:8px;cursor:pointer;width:auto}
+.gate-keep input{width:18px;height:18px;flex:none;margin:0;accent-color:rgb(var(--c))}
 .gate-go{padding:10px;font-size:15px}
 .gate-msg{min-height:18px;font-size:13px;color:var(--dim)}
 .gate-msg.bad{color:var(--amb)}
 .gate-note{margin-top:14px;font-size:11px;color:var(--dim);border-top:1px dotted var(--line2);padding-top:10px}
-@media (max-width:640px){ .gate{margin:8vh 12px 0} }
+@media (max-width:640px){ .gate{padding:22px 18px 16px} }
+
+/* v1.4.0 — 화면 비율 · 휴대폰 최적화 */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html,body{min-height:100%}
+body{min-height:calc(100vh / var(--z, 1));min-height:calc(100dvh / var(--z, 1));-webkit-tap-highlight-color:transparent}
+.wrap{padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}
+.bgm{right:max(18px,env(safe-area-inset-right));bottom:max(18px,env(safe-area-inset-bottom))}
+.memo-in{display:flex;flex-direction:column;gap:6px;min-width:0}
+.memo-bar{display:flex;align-items:center;justify-content:flex-end;gap:10px}
+.memo-st{font-size:12px;color:var(--dim)}
+.memo-st.dirty{color:var(--amb)}
+.memo-save{min-width:72px}
+@media (max-width:640px){
+  .wrap{padding-left:max(10px,env(safe-area-inset-left));padding-right:max(10px,env(safe-area-inset-right));padding-bottom:calc(120px + env(safe-area-inset-bottom))}
+  /* iOS: 16px 보다 작은 입력칸을 누르면 화면이 확대되므로 입력칸 글자는 16px */
+  input,select,textarea{font-size:16px !important}
+  .gate-pin{font-size:32px !important}
+  .bgm{bottom:max(8px,env(safe-area-inset-bottom))}
+  .toast{bottom:calc(26px + env(safe-area-inset-bottom))}
+  .memo-save{min-height:40px}
+}
