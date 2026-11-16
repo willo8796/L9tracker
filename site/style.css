@@ -993,3 +993,42 @@ mark.ldc{background:rgba(255,200,97,.22);color:var(--hi);padding:0 2px}
   .trgs{gap:12px}
   .trg{padding:10px 12px}
 }
+
+/* v1.3.0 — 변경 이력 소메뉴 */
+.cgtabs{grid-template-columns:repeat(5,1fr)}
+.cgcom{border-bottom:1px solid var(--line2)}
+.cgnote{padding:0;cursor:default}
+.cgnote summary{padding:8px 16px;cursor:pointer;color:var(--dim);list-style:none;user-select:none}
+.cgnote summary::-webkit-details-marker{display:none}
+.cgnote summary::before{content:'+ ';color:var(--hi)}
+.cgnote[open] summary::before{content:'- '}
+.cgnote summary:hover{color:var(--hi)}
+.cgnote > div{padding:0 16px 10px}
+@media (max-width:640px){
+  .cgtabs button{font-size:12px;padding:10px 2px}
+  .cgtabs button small{font-size:10.5px}
+}
+/* v1.3.0 — 이전 기간 · 세탁 의심 이유 */
+.trwins .trwin{margin:4px 0}
+.trwins .trwin b{font-family:"VT323",monospace;font-size:16px;margin-right:4px}
+.trwins .trwin.now b,.trwins .trwin.next b{color:var(--hi)}
+.ldwhy{font-size:12px;border-top:1px dotted var(--line2);padding-top:6px}
+.ldwhy ul{margin:4px 0 0;padding-left:16px}
+.ldwhy li{margin:2px 0;line-height:1.45}
+.ldwhy b{color:var(--hi);font-weight:400}
+.trmode{color:var(--ink)}
+.trmode a,.trwins a{color:var(--hi)}
+
+/* v1.4.0 — 입장 화면 */
+.gate{max-width:360px;margin:12vh auto 0;padding:26px 24px 20px;position:relative}
+.gate-id{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+.gate form{display:flex;flex-direction:column;gap:10px}
+.gate-lbl{font-size:13px;color:var(--dim)}
+.gate-pin{font:inherit;font-family:"VT323",monospace;font-size:32px;letter-spacing:12px;text-align:center;padding:8px 10px;background:rgba(var(--c),.06);border:1px solid var(--line2);color:var(--hi)}
+.gate-pin:focus{outline:1px solid var(--hi)}
+.gate-keep{font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer}
+.gate-go{padding:10px;font-size:15px}
+.gate-msg{min-height:18px;font-size:13px;color:var(--dim)}
+.gate-msg.bad{color:var(--amb)}
+.gate-note{margin-top:14px;font-size:11px;color:var(--dim);border-top:1px dotted var(--line2);padding-top:10px}
+@media (max-width:640px){ .gate{margin:8vh 12px 0} }

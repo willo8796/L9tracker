@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.2.0';
+const VERSION = '1.4.0';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -29,8 +29,80 @@ function migrateFav(){
   }
   delete ST.fav; return true;
 }
+// 저장값·백업 파일 검증 (v1.4.1): 허용된 키만, 형식이 맞는 항목만 복사 — 나머지는 버리고 개수를 돌려줌
+const RE_DATE = /^\d{4}-\d{2}-\d{2}$/, RE_AT = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$/, RE_ID = /^[a-z0-9_-]{1,40}$/i, RE_MC = /^Mastery_[A-Za-z0-9]{1,40}$/;
+const isObj = o => o !== null && typeof o === 'object' && !Array.isArray(o);
+const isStr = (v, max) => typeof v === 'string' && v.length <= max;
+const badKey = k => k === '__proto__' || k === 'constructor' || k === 'prototype';
+const isInt = v => typeof v === 'number' && Number.isInteger(v);
+const CTRL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+const inR = (v, lo, hi) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+const LIM = {tracked: 5000, ev: 50, expr: 2000, gnote: 2000, integ: 500, mastery: 500, calib: 500};
+function cleanStore(j){
+  let drop = 0;
+  const out = freshStore();
+  if(!isObj(j)) return {st: out, drop: 1};
+  out.imported = j.imported === true;
+  const SUR_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;   // 짝 없는 서로게이트
+  const okChar = t => isObj(t) && isInt(t.w) && t.w >= 0 && t.w <= 9999 && isStr(t.n, 40) && !t.n.includes('|') && !SUR_RE.test(t.n) && t.n.replace(CTRL_RE, '').trim() && (t.memo == null || typeof t.memo === 'string');
+  for(const t of Array.isArray(j.tracked) ? j.tracked : []){
+    if(!okChar(t)){ drop++; continue; }
+    if(out.tracked.length >= LIM.tracked){ drop++; continue; }
+    const o = {w: t.w, n: t.n.replace(CTRL_RE, '').trim(), added: isStr(t.added, 10) && RE_DATE.test(t.added) ? t.added : '', ev: []};
+    if(t.memo) o.memo = t.memo.slice(0, 20000);   // 너무 길면 버리지 않고 값만 자름
+    for(const e of Array.isArray(t.ev) ? t.ev.slice(-LIM.ev * 4) : []){
+      if(isObj(e) && isStr(e.d, 10) && RE_DATE.test(e.d) && typeof e.kind === 'string' && typeof e.before === 'string' && typeof e.after === 'string') o.ev.push({d: e.d, kind: e.kind.slice(0, 30), before: e.before.slice(0, 80), after: e.after.slice(0, 80)}); else drop++;
+    }
+    o.ev = o.ev.slice(-LIM.ev);   // 이력은 최근 것부터 남김 (오래된 순으로 쌓임)
+    out.tracked.push(o);
+  }
+  // 옛 버전의 즐겨찾기 (migrateFav 가 추적 메모로 옮김)
+  if(Array.isArray(j.fav)) out.fav = j.fav.filter(f => okChar(f)).slice(0, LIM.tracked).map(f => ({w: f.w, n: f.n.replace(CTRL_RE, '').trim(), memo: (f.memo || '').slice(0, 20000), added: isStr(f.added, 10) && RE_DATE.test(f.added) ? f.added : ''}));
+  if(isObj(j.mastery)) for(const [k, v] of Object.entries(j.mastery)){
+    if(badKey(k) || k.length > 80 || !isObj(v) || Object.keys(out.mastery).length >= LIM.mastery){ drop++; continue; }
+    const m = {};
+    for(const [code, x] of Object.entries(v)){
+      if(RE_MC.test(code) && isObj(x) && isInt(x.l) && x.l >= 0 && x.l <= 1000 && isStr(x.d, 10) && RE_DATE.test(x.d)) m[code] = {l: x.l, d: x.d}; else drop++;
+    }
+    out.mastery[k] = m;
+  }
+  if(isObj(j.integ)) for(const [k, v] of Object.entries(j.integ)){
+    if(badKey(k) || k.length > 80 || !Array.isArray(v) || Object.keys(out.integ).length >= LIM.integ){ drop++; continue; }
+    out.integ[k] = v.filter(x => { const ok = isObj(x) && isStr(x.d, 10) && RE_DATE.test(x.d) && inR(x.l, 0, 100000) && (x.p == null || inR(x.p, 0, 1000)); if(!ok) drop++; return ok; })
+      .slice(-LIM.integ).map(x => ({d: x.d, l: x.l, p: x.p == null ? null : x.p}));
+  }
+  for(const r of Array.isArray(j.expr) ? j.expr : []){
+    if(out.expr.length >= LIM.expr){ drop++; continue; }
+    if(isObj(r) && typeof r.id === 'string' && RE_ID.test(r.id) && typeof r.place === 'string' && inR(r.exp, 0, 1e15) && inR(r.secs, 1, 1e7) && isStr(r.at, 19) && RE_AT.test(r.at))
+      out.expr.push({id: r.id, place: r.place.slice(0, 100), exp: r.exp, secs: r.secs, at: r.at}); else drop++;
+  }
+  let gnTotal = 0;
+  if(isObj(j.gnote)) for(const [k, v] of Object.entries(j.gnote)){
+    if(badKey(k) || k.length > 80 || !Array.isArray(v) || gnTotal >= LIM.gnote){ drop++; continue; }
+    out.gnote[k] = v.slice(0, LIM.gnote - gnTotal).filter(x => { const ok = isObj(x) && typeof x.id === 'string' && RE_ID.test(x.id) && typeof x.t === 'string' && isStr(x.at, 19); if(!ok) drop++; return ok; })
+      .map(x => ({id: x.id, t: x.t.slice(0, 20000), at: x.at}));
+    gnTotal += out.gnote[k].length;
+  }
+  if(Array.isArray(j.calib)) out.calib = j.calib.filter(x => isObj(x) && isStr(x.k, 80) && inR(x.sum, 0, 11000) && inR(x.v, 0, 10000)).slice(0, LIM.calib).map(x => ({k: x.k, sum: x.sum, v: x.v}));
+  if(isObj(j.lvc)){
+    const w = {};
+    if(isObj(j.lvc.w)) for(const [k, v] of Object.entries(j.lvc.w)) if(/^\d{1,2}[lp]$/.test(k) && (typeof v === 'string' || typeof v === 'number') && String(v).length <= 12) w[k] = String(v);
+    out.lvc = {my: isStr(j.lvc.my, 40) ? j.lvc.my : '', op: isStr(j.lvc.op, 40) ? j.lvc.op : '', w, opw: isStr(j.lvc.opw, 200) ? j.lvc.opw : ''};
+  }
+  return {st: out, drop};
+}
+// 시작할 때 정리하면서 항목을 버렸으면: 정리 결과를 저장하기 전에 원본을 한 번 보관해 둠
+let LOAD_NOTE = '';
+function cleanLoaded(s, raw){
+  const cl = cleanStore(s);
+  if(cl.drop > 0){
+    try{ if(localStorage.getItem(SKEY + '.bak') === null) localStorage.setItem(SKEY + '.bak', raw != null ? raw : JSON.stringify(s)); }catch(e){}
+    LOAD_NOTE = `${cl.drop}개 항목을 정리했습니다 (원본은 ${SKEY}.bak 에 보관)`;
+  }
+  return cl.st;
+}
 function loadStore(){
-  try{ const s = JSON.parse(localStorage.getItem(SKEY) || 'null'); if(s && s.v === 1) return Object.assign(freshStore(), s); }catch(e){}
+  try{ const raw = localStorage.getItem(SKEY), s = JSON.parse(raw || 'null'); if(s && s.v === 1) return cleanLoaded(s, raw); }catch(e){}
   return freshStore();
 }
 let ST = loadStore(); migrateFav();
@@ -42,7 +114,22 @@ function saveStore(){
 // 내 PC 프로그램: 기록을 프로그램 폴더(data\\store.json)에도 저장 — 창(브라우저)이 바뀌어도 그대로
 const SYNC = {on: false, t: null, pt: null};
 function syncPush(body){ fetch('api/store', {method:'POST', headers:{'Content-Type':'application/json', 'X-L9':'1'}, body: JSON.stringify(body)}).catch(() => {}); }
-function prefsNow(){ const o = {}; try{ for(let i = 0; i < localStorage.length; i++){ const k = localStorage.key(i); if(k.startsWith('l9') && k !== SKEY) o[k] = localStorage.getItem(k); } }catch(e){} return o; }
+// 내 PC 프로그램과 주고받는 설정 키 (이 목록에 있는 것만)
+const PREF_KEYS = ['l9trsel', 'l9trf', 'l9trtab', 'l9scope', 'l9rank', 'l9cgtab', 'l9toptab', 'l9bgmList', 'l9bgmVol', 'l9bgmMini', 'l9bgmShuf', 'l9bgmAuto', 'l9phos'];
+function prefsNow(){ const o = {}; try{ for(const k of PREF_KEYS){ const v = localStorage.getItem(k); if(v !== null && v.length <= 2000) o[k] = v; } }catch(e){} return o; }
+// 저장값은 믿지 않고 항목별로 형식·범위를 확인해서 복사: s=문자열(최대 길이) · n=정수(최소, 최대) · e=허용 값 목록
+function lsJson(k, st){ try{ const v = JSON.parse((st || localStorage).getItem(k) || 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }catch(e){ return {}; } }
+function pickVals(src, spec, base){
+  const o = Object.assign({}, base);
+  for(const k of Object.keys(spec)){
+    const [t, a, b] = spec[k], v = src[k];
+    if(t === 's'){ if(typeof v === 'string' && v.length <= a) o[k] = v; }
+    else if(t === 'n'){ if(typeof v === 'number' && Number.isFinite(v) && v >= a && v <= b) o[k] = Math.trunc(v); }
+    else if(t === 'e'){ if(a.includes(v)) o[k] = v; }
+  }
+  return o;
+}
+function lsEnum(k, ok, d){ const v = lsGet(k, d); return ok.includes(v) ? v : d; }
 function lsGet(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : v; }catch(e){ return d; } }
 function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} if(SYNC.on){ clearTimeout(SYNC.pt); SYNC.pt = setTimeout(() => syncPush({prefs: prefsNow()}), 600); } }
 const key = (w, n) => `${w}|${n}`;
@@ -51,14 +138,52 @@ const key = (w, n) => `${w}|${n}`;
 const D = {meta:null, worlds:{}, hist:{}, moves:null, local:null, gen:'', sortCache:{}, quick:null};
 const CRC = (() => { const t = new Uint32Array(256); for(let i=0;i<256;i++){ let c=i; for(let k=0;k<8;k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[i]=c>>>0; } return t; })();
 function crc32(str){ const b = new TextEncoder().encode(str); let c = 0xFFFFFFFF; for(const x of b) c = CRC[(c ^ x) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+/* ------------------------------------------------------------ 데이터 잠금 (v1.4.0)
+   웹에 올린 데이터는 seal.py 로 암호화돼 있음 (data/key.json 이 있으면). 입장 화면(index.html)에서 비밀번호로 꺼낸
+   데이터 키를 sessionStorage(또는 '로그인 유지' 때 localStorage)의 l9key 에 두고 여기서 파일을 풂.
+   내 PC 프로그램 데이터는 암호화하지 않음 (key.json 없음). */
+const SEAL = {on: false, key: null, kid: ''};
+const SEAL_MAGIC = [76, 57, 69, 49];   // "L9E1"
+function sealStored(){
+  for(const st of [sessionStorage, localStorage]){
+    try{ const v = JSON.parse(st.getItem('l9key') || 'null'); if(v && typeof v.k === 'string' && typeof v.kid === 'string') return v; }catch(e){}
+  }
+  return null;
+}
+function sealForget(){ for(const st of [sessionStorage, localStorage]){ try{ st.removeItem('l9key'); }catch(e){} } }
+function sealGate(){ location.replace('index.html' + (/^#[a-z]{1,12}$/.test(location.hash) ? location.hash : '')); }
+function b64bytes(s){ const b = atob(s), u = new Uint8Array(b.length); for(let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+async function sealInit(){
+  let kj = null;
+  try{ const r = await fetch('data/key.json?t=' + Date.now(), {cache: 'no-store'}); if(r.ok) kj = await r.json(); }catch(e){}
+  if(!kj || typeof kj.kid !== 'string'){ SEAL.on = false; return true; }   // 잠기지 않은 데이터 (내 PC 등)
+  SEAL.on = true; SEAL.kid = kj.kid;
+  const v = sealStored();
+  if(!v || v.kid !== kj.kid){ sealForget(); sealGate(); return false; }   // 비밀번호가 바뀌었거나 입장 전
+  try{ SEAL.key = await crypto.subtle.importKey('raw', b64bytes(v.k), 'AES-GCM', false, ['decrypt']); }
+  catch(e){ sealForget(); sealGate(); return false; }
+  return true;
+}
+async function readData(r){
+  const u = new Uint8Array(await r.arrayBuffer());
+  if(u.length > 17 && SEAL_MAGIC.every((x, i) => u[i] === x)){
+    if(!SEAL.key){ sealGate(); throw new Error('잠긴 데이터입니다'); }
+    let plain;
+    try{ plain = new Uint8Array(await crypto.subtle.decrypt({name: 'AES-GCM', iv: u.slice(5, 17), additionalData: new Uint8Array(SEAL_MAGIC)}, SEAL.key, u.slice(17))); }
+    catch(e){ sealForget(); sealGate(); throw new Error('데이터를 풀지 못했습니다'); }
+    if(u[4] & 1) plain = new Uint8Array(await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+  return JSON.parse(new TextDecoder().decode(u));
+}
 async function getJSON(path){
   const r = await fetch(path + '?t=' + encodeURIComponent(D.gen || Date.now()), {cache:'no-cache'});
   if(!r.ok) throw new Error('데이터를 불러오지 못했습니다 (' + path + ' ' + r.status + ')');
-  return r.json();
+  return readData(r);
 }
 async function loadMeta(){
   let m = null;
-  try{ const r = await fetch('data/meta.json?t=' + Date.now(), {cache:'no-store'}); if(r.ok) m = await r.json(); }catch(e){}
+  try{ const r = await fetch('data/meta.json?t=' + Date.now(), {cache:'no-store'}); if(r.ok) m = await readData(r); }catch(e){}
   if(!m){ D.meta = null; return null; }
   if(!D.meta || m.generated !== D.meta.generated){ D.worlds = {}; D.hist = {}; D.moves = null; D.sortCache = {}; D.gev = null; D.chg = null; }
   D.meta = m; D.gen = m.generated;
@@ -83,7 +208,7 @@ const readyWorlds = () => (D.meta?.worlds || []).filter(w => w.ready !== false &
 async function allWorlds(){ return Promise.all(readyWorlds().map(w => world(w.code))); }
 async function loadQuick(){
   if(!D.local){ D.quick = null; return null; }
-  try{ const r = await fetch('data/quick.json?t=' + Date.now(), {cache:'no-store'}); D.quick = r.ok ? await r.json() : null; }catch(e){ D.quick = null; }
+  try{ const r = await fetch('data/quick.json?t=' + Date.now(), {cache:'no-store'}); D.quick = r.ok ? await readData(r) : null; }catch(e){ D.quick = null; }
   return D.quick;
 }
 function histShard(i){
@@ -91,7 +216,19 @@ function histShard(i){
   return D.hist[i];
 }
 async function histOf(k){ if(!D.meta) return null; const sh = await histShard(crc32(k) % (D.meta.shards || 64)); return sh[k] || null; }
-async function moves(){ if(!D.moves) D.moves = getJSON('data/moves.json').catch(() => []); return D.moves; }
+async function moves(){ if(!D.moves) D.moves = getJSON('data/moves.json').then(trLegalMoves).catch(() => []); return D.moves; }
+// v1.3.0: 수집기가 이전 기간 확인을 하기 전(2026-11-17 전)에 만든 연결 중 이전 기간 밖에 월드 · 서버가 바뀐 것은 따라가지 않음
+function trLegalMoves(l){
+  if(!Array.isArray(l)) return [];
+  const W = trWins(null), since = dayNum('2026-11-17');
+  return l.filter(m => {
+    if(!m || m.d >= since || !['확실', '유력'].includes(m.lv) || !m.from || !m.to) return true;
+    const fw = m.from[0], tw = m.to[0], fs = (m.fs || [0])[0], ts = (m.ts || [0])[0];
+    if(fw !== tw) return !!trWinOf(W, 2, m.d - TR_GRACE, m.d, wName(fw), wName(tw));
+    if(fs && ts && fs !== ts) return !!trWinOf(W, 3, m.d - TR_GRACE, m.d, wName(fw));
+    return true;
+  });
+}
 
 const wName = wc => (D.meta?.worlds || []).find(w => w.code === Number(wc))?.name || (D.wlist || []).find(w => w[0] === Number(wc))?.[1] || String(wc);
 const jobName = j => typeof j === 'string' ? j : ((D.meta?.jobs || [])[j] ?? '--');
@@ -334,11 +471,11 @@ function mcell(c, code, name){
   const isRep = r && mcode(r[C.mc]) === code;
   const old = m && (Date.parse(todayKST()) - Date.parse(m.date)) / 864e5 > 14;
   const cap = isEq ? '장착 중' : (m ? m.source : '미입력');
-  return `<div role="button" tabindex="0" class="m ${isEq ? 'eq' : ''} ${m ? '' : 'none'} ${old ? 'old' : ''}" data-act="medit" data-k="${esc(c.k)}" data-code="${code}"
+  return `<div role="button" tabindex="0" class="m ${isEq ? 'eq' : ''} ${m ? '' : 'none'} ${old ? 'old' : ''}" data-act="medit" data-k="${esc(c.k)}" data-code="${esc(code)}"
       title="${esc(name)} — ${m ? esc(m.date + ' · ' + m.source) + ' · 클릭해서 수정' : '클릭해서 레벨 입력'}">
     ${isRep ? '<span class="tag">대표</span>' : ''}
-    <div class="mt">${esc(name)}</div><div class="mv">${m ? m.level : '--'}</div><div class="hint">+ 입력</div>
-    <div class="md">${m ? esc(m.date.slice(5)) : '&nbsp;'}</div><div class="mc">${cap}</div></div>`;
+    <div class="mt">${esc(name)}</div><div class="mv">${m ? esc(m.level) : '--'}</div><div class="hint">+ 입력</div>
+    <div class="md">${m ? esc(m.date.slice(5)) : '&nbsp;'}</div><div class="mc">${esc(cap)}</div></div>`;
 }
 function print(seed){
   let s = '';
@@ -366,7 +503,7 @@ function subject(c, idx, mode){
     <div class="dots" title="검색됨 · 일별 기록 · 통합 레벨"><i class="${ok ? 'on' : ''}"></i><i class="${c.series.length ? 'on' : ''}"></i><i class="${it ? 'on' : ''}"></i></div>
   </div>`;
   const tm = ST.tracked.find(t => key(t.w, t.n) === c.k);
-  if(tm) h += `<div class="tmemo-box"><label>메모</label><textarea class="memo" data-memo="${esc(c.k)}" rows="2" placeholder="이 캐릭터에 대한 메모 (입력하면 자동 저장 · 이 브라우저에만 저장)">${esc(tm.memo || '')}</textarea></div>`;
+  if(tm) h += `<div class="tmemo-box"><label>메모</label><textarea class="memo" maxlength="20000" data-memo="${esc(c.k)}" rows="2" placeholder="이 캐릭터에 대한 메모 (입력하면 자동 저장 · 이 브라우저에만 저장)">${esc(tm.memo || '')}</textarea></div>`;
   if((D.meta || D.quick) && !ok) h += `<div class="alert" data-miss="${esc(c.k)}">${esc(wName(c.t.w))}에서 검색되지 않습니다 — ${CRIT_SHORT()} 밖이거나 닉네임 변경·월드 이전 가능성 <span class="cands-msg"></span></div>`;
   const useEst = c.est && (!it || (c.mLast && c.mLast > it.d));
   const shown = useEst ? {l: c.est.l, p: c.est.p, d: c.mLast} : it;
@@ -504,8 +641,9 @@ const BACKUP_NOTE = `<div class="note fr" style="margin-top:14px">추적 · 메�
 // (추적 · 메모 · 경험치 기록은 그대로 저장)
 function saveSession(){ try{ sessionStorage.setItem('l9session', JSON.stringify({cur: ST.cur || null, recent: ST.recent || []})); }catch(e){} }
 function loadSession(){
-  let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9session') || 'null'); }catch(e){}
-  ST.cur = x?.cur || null; ST.recent = x?.recent || [];
+  const x = lsJson('l9session', sessionStorage);
+  const one = c => c && typeof c === 'object' && Number.isInteger(c.w) && c.w >= 0 && c.w <= 999999 && typeof c.n === 'string' && c.n && c.n.length <= 40 ? {w: c.w, n: c.n} : null;
+  ST.cur = one(x.cur); ST.recent = Array.isArray(x.recent) ? x.recent.slice(0, 8).map(one).filter(Boolean) : [];
 }
 function setCur(w, n){
   ST.cur = {w: Number(w), n};
@@ -518,11 +656,11 @@ async function pageMy(){
   CARDS = await buildCards([ST.cur]);
   const rec = (ST.recent || []).filter(x => !(x.w === ST.cur.w && x.n === ST.cur.n));
   setTimeout(fillMissCands, 0);
-  return `<div class="recent fr">${rec.length ? `<span class="lbl">최근 본 캐릭터</span>${rec.map(x => `<button class="chip" data-act="setcur" data-w="${x.w}" data-n="${esc(x.n)}"><b>${esc(x.n)}</b> <small>${esc(wName(x.w))}</small></button>`).join('')}` : '<span class="lbl">검색한 캐릭터 1명이 표시됩니다</span>'}
+  return `<div class="recent fr">${rec.length ? `<span class="lbl">최근 본 캐릭터</span>${rec.map(x => `<button class="chip" data-act="setcur" data-w="${Number(x.w)}" data-n="${esc(x.n)}"><b>${esc(x.n)}</b> <small>${esc(wName(x.w))}</small></button>`).join('')}` : '<span class="lbl">검색한 캐릭터 1명이 표시됩니다</span>'}
       <button class="btn myreset" data-act="my-reset" title="표시 중인 캐릭터와 최근 본 캐릭터를 지웁니다 (추적 · 메모는 그대로)">화면 초기화</button></div>`
     + subject(CARDS[0], 0, 'main') + BACKUP_NOTE;
 }
-let TRSEL = lsGet('l9trsel', '');
+let TRSEL = lsGet('l9trsel', ''); if(TRSEL.length > 100) TRSEL = '';
 // 목록의 [해제] 버튼이 [모두 해제] 버튼 가운데에 오도록 맞춤 (화면 폭이 달라도)
 function alignTrBar(){
   const bar = document.querySelector('.trbar'), tbl = document.querySelector('.trk');
@@ -539,10 +677,10 @@ function alignTrBar(){
   if(Math.abs(diff) > .5) tbl.style.setProperty('--delpad', Math.max(0, cur + diff) + 'px');
 }
 window.addEventListener('resize', () => alignTrBar());
-const TRF = Object.assign({q: '', g: '', w: 0, sort: 'add'}, JSON.parse(lsGet('l9trf', '{}') || '{}'));   // 추적 목록 찾기 · 필터
+const TRF = pickVals(lsJson('l9trf'), {q: ['s', 100], g: ['s', 100], w: ['n', 0, 999999], sort: ['e', ['add', 'bp', 'ml', 'sp', 'name', 'guild']], page: ['n', 0, 100000], gq: ['s', 100], gsort: ['e', ['n', 'avg', 'max', 'name']]}, {q: '', g: '', w: 0, sort: 'add'});   // 추적 목록 찾기 · 필터
 function saveTRF(){ lsSet('l9trf', JSON.stringify(TRF)); }
 const TRVIEW = {keys: []};   // 지금 화면에 보이는 (필터 적용된) 추적 캐릭터
-let TRTAB = lsGet('l9trtab', 'list');
+let TRTAB = lsEnum('l9trtab', ['list', 'guild', 'ov', 'detail'], 'list');
 if(!['list', 'guild', 'ov', 'detail'].includes(TRTAB)) TRTAB = 'list';
 function setTrTab(v){ TRTAB = v; lsSet('l9trtab', v); }
 // 길드별: 추적 캐릭터를 길드로 묶어 보기
@@ -675,7 +813,7 @@ function startMEdit(el){
   document.querySelectorAll('.m.editing').forEach(x => cancelMEdit(x));
   const c = CARDS.find(x => x.k === el.dataset.k), code = el.dataset.code, m = c.ms[code];
   el.classList.add('editing'); el._html = el.innerHTML;
-  el.querySelector('.mv').innerHTML = `<input class="min" type="number" min="1" max="300" inputmode="numeric" value="${m ? m.level : ''}" aria-label="${esc(mname(code))} 레벨">`;
+  el.querySelector('.mv').innerHTML = `<input class="min" type="number" min="1" max="300" inputmode="numeric" value="${m ? esc(m.level) : ''}" aria-label="${esc(mname(code))} 레벨">`;
   el.querySelector('.md').textContent = 'Enter 저장';
   el.querySelector('.hint')?.remove();
   const inp = el.querySelector('.min');
@@ -696,12 +834,12 @@ async function saveMEdit(el, val){
   (ST.mastery[k] ||= {})[code] = {l: Number(val), d: todayKST()};
   saveStore();
   await render();
-  document.querySelector(`.m[data-k="${CSS.escape(k)}"][data-code="${code}"]`)?.classList.add('flash');
+  document.querySelector(`.m[data-k="${CSS.escape(k)}"][data-code="${CSS.escape(code)}"]`)?.classList.add('flash');
   toast(`${k.split('|')[1]} · ${mname(code)} ${val} 저장했습니다`);
 }
 
 /* ============================================================ 범위 선택 (랭킹 · TOP 20 · 통계 공용) */
-const SC = Object.assign({scope:'all', w:null, s:0}, JSON.parse(lsGet('l9scope', '{}') || '{}'));
+const SC = pickVals(lsJson('l9scope'), {scope: ['e', ['all', 'world', 'server']], w: ['n', 0, 999999], s: ['n', 0, 999999]}, {scope:'all', w:null, s:0});
 function saveSC(){ lsSet('l9scope', JSON.stringify(SC)); }
 function partialNote(){
   const m = D.meta; if(!m?.partial && !readyWorlds().some(w => w.stale)) return '';
@@ -716,7 +854,7 @@ function scopeCtrls(){
   const sv = ws.find(w => w.code === SC.w)?.servers || [];
   if(!sv.includes(SC.s)) SC.s = sv[0] || 0;
   return `<span class="lbl">범위</span>${seg('sc-scope', SC.scope, [['all', '전체 월드'], ['world', '월드'], ['server', '서버']])}
-    ${SC.scope !== 'all' ? `<select data-ch="sc-w">${ws.map(w => `<option value="${w.code}" ${w.code === SC.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>` : ''}
+    ${SC.scope !== 'all' ? `<select data-ch="sc-w">${ws.map(w => `<option value="${esc(w.code)}" ${w.code === SC.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>` : ''}
     ${SC.scope === 'server' ? `<select data-ch="sc-s">${sv.map(s => `<option value="${s}" ${s === SC.s ? 'selected' : ''}>${serverLabel(s)}</option>`).join('')}</select>` : ''}`;
 }
 async function scopeRows(){
@@ -739,7 +877,7 @@ async function sorted(by, job){
 const isTracked = r => ST.tracked.some(t => t.w === r[C.w] && t.n === r[C.n]);
 
 /* ============================================================ 랭킹 */
-const RK = Object.assign({by:'ml', job:'', q:'', page:0}, JSON.parse(lsGet('l9rank', '{}') || '{}'));
+const RK = pickVals(lsJson('l9rank'), {by: ['e', ['ml', 'bp']], job: ['s', 40], q: ['s', 100], page: ['n', 0, 100000]}, {by:'ml', job:'', q:'', page:0});
 const PAGE = 50;
 async function pageRank(){
   if(!readyWorlds().length) return noData();
@@ -805,7 +943,7 @@ async function charDialog(w, n){
       ${kv('마스터리 랭크', '#' + nf(r[C.mr]), 'dg')}${kv('전투력', nf(r[C.bp]), 'dg')}
       ${kv('전투력 순위', `월드 <b class="dg">#${nf(r[C.bwr])}</b> · 서버 <b class="dg">#${nf(r[C.bsr])}</b>`)}
       ${kv('업적점수', nf(r[C.ach]), 'dg')}${kv('전문화', nf(r[C.sp]), 'dg')}</div>
-    ${tm ? `<div class="f" style="margin:14px 0 0"><label>추적 메모</label><textarea class="memo" data-memo="${esc(key(w, n))}" rows="3" placeholder="메모 입력 (자동 저장)">${esc(tm.memo || '')}</textarea></div>` : ''}`;
+    ${tm ? `<div class="f" style="margin:14px 0 0"><label>추적 메모</label><textarea class="memo" maxlength="20000" data-memo="${esc(key(w, n))}" rows="3" placeholder="메모 입력 (자동 저장)">${esc(tm.memo || '')}</textarea></div>` : ''}`;
   showDlg(`<b class="cname">${esc(n)}</b> <small>${esc(got.date || '')} 기준</small>`, html, [
     {id:'main', label:'캐릭터에서 보기', run:() => { $('#dlgAdd').open && $('#dlgAdd').close(); setCur(w, n); if(route() !== 'my') location.hash = '#my'; else render(); }},
     tracked ? {id:'go', label:'추적에서 보기', pri:true, run:() => { TRSEL = key(w, n); lsSet('l9trsel', TRSEL); setTrTab('detail'); location.hash = '#track'; }}
@@ -814,6 +952,7 @@ async function charDialog(w, n){
 function track(w, n){
   w = Number(w);
   if(ST.tracked.some(t => t.w === w && t.n === n)){ toast('이미 추적 중입니다'); return; }
+  if(ST.tracked.length >= LIM.tracked){ toast(`추적은 최대 ${LIM.tracked}명까지입니다`); return; }
   ST.tracked.push({w, n, added: todayKST(), ev: []}); saveStore();
   toast(`${n} 추적을 시작합니다 — [추적]에서 관리합니다`);
   if(D.local) quickRun([[w, n]], true); else render();
@@ -853,7 +992,7 @@ async function findGuilds(q, w, sv){
   return out.sort((a, b) => (b.g === q) - (a.g === q) || b.rows.length - a.rows.length || b.avg - a.avg);
 }
 // 길드 화면 상태는 이번 접속(탭) 동안만 기억
-const GS = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9guild') || 'null'); }catch(e){} x = x || {}; if(x.sel && x.sel.split('|').length !== 3) x.sel = null; return {q: x.q || '', sel: x.sel || null, per: x.per || 30}; })();
+const GS = (() => { const x = pickVals(lsJson('l9guild', sessionStorage), {q: ['s', 100], sel: ['s', 200], per: ['e', [7, 30, 999]]}, {q: '', sel: null, per: 30}); if(x.sel && x.sel.split('|').length !== 3) x.sel = null; return x; })();
 function saveGS(){ try{ sessionStorage.setItem('l9guild', JSON.stringify(GS)); }catch(e){} }
 function openGuild(k){ GS.sel = k; saveGS(); if(route() !== 'guild') location.hash = '#guild'; else { render().then(() => $('#gdetail')?.scrollIntoView({block:'start'})); } }
 async function gevents(){ if(!D.gev) D.gev = getJSON('data/gevents.json').catch(() => []); return D.gev; }
@@ -878,7 +1017,7 @@ function nowKST(){ return new Date(Date.now() + 9 * 3600e3).toISOString().slice(
 function guildComments(g){
   const l = ((ST.gnote || {})[g.k] || []).slice().reverse().sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0);   // 같은 분이면 나중에 쓴 것 먼저
   return `<div class="sec">코멘트 <small>${nf(l.length)}개 · 최신 순 · 이 브라우저에만 저장됩니다 (다른 기기로 옮기려면 [캐릭터] · [추적] 아래 [백업 저장])</small></div>
-    <div class="gcm"><div class="gcm-in"><textarea class="memo" id="gcmText" data-gk="${esc(g.k)}" rows="2" placeholder="이 길드에 대한 코멘트 입력 (Ctrl+Enter로 추가)">${esc(GCD[g.k] || '')}</textarea>
+    <div class="gcm"><div class="gcm-in"><textarea class="memo" maxlength="20000" id="gcmText" data-gk="${esc(g.k)}" rows="2" placeholder="이 길드에 대한 코멘트 입력 (Ctrl+Enter로 추가)">${esc(GCD[g.k] || '')}</textarea>
       <button class="btn pri" data-act="gc-add" data-k="${esc(g.k)}">코멘트 추가</button></div>
     ${l.length ? `<ul class="gcm-l">${l.map(c => `<li><div class="gcm-h"><span class="dg">${esc(c.at)}</span><button class="mini-btn" data-act="gc-del" data-k="${esc(g.k)}" data-id="${esc(c.id)}">삭제</button></div><div class="gcm-t">${esc(c.t)}</div></li>`).join('')}</ul>` : '<div class="empty gcm-e">아직 코멘트가 없습니다</div>'}</div>`;
 }
@@ -983,11 +1122,109 @@ async function pageGuild(){
 }
 
 /* ============================================================ 변경 이력 */
-const CG = (() => { let x = null; try{ x = JSON.parse(sessionStorage.getItem('l9chg') || 'null'); }catch(e){} return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0, sort: 'd', dir: -1, ld: ''}, x || {}, {page: 0, mv: 24, ldm: 24, gom: 50}); })();
-function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf, sort: CG.sort, dir: CG.dir, ld: CG.ld})); }catch(e){} }
+const CG = (() => {
+  const x = pickVals(lsJson('l9chg', sessionStorage), {per: ['n', 1, 9999], kind: ['n', -1, 99], w: ['n', 0, 999999], s: ['n', 0, 999999], q: ['s', 100], cf: ['n', 0, 99],
+    sort: ['e', ['d', 'kind', 'name', 'world', 'server', 'bp', 'ml', 'sp']], dir: ['e', [1, -1]], ld: ['e', ['', '높음', '보통', '낮음']], lcf: ['n', 0, 99], mcf: ['n', 0, 99], mk: ['n', -1, 99],
+    msort: ['e', ['d', 'bp']], gsort: ['e', ['d', 'bp']], ak: ['e', ['', '사라진 캐릭터', '다른 캐릭터의 예전 이름', '같은 월드 현재 캐릭터']]}, {});
+  return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0, sort: 'd', dir: -1, ld: '', lcf: 0, mcf: 0, mk: -1, msort: 'd', gsort: 'd', ak: ''}, x, {page: 0, mv: 24, asm: 24, ldm: 24, gom: 50}); })();
+function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf, sort: CG.sort, dir: CG.dir, ld: CG.ld, lcf: CG.lcf, mcf: CG.mcf, mk: CG.mk, msort: CG.msort, gsort: CG.gsort, ak: CG.ak})); }catch(e){} }
 function cfBadge(c, n, sc){ return c === 1 ? '<span class="cfb c1" title="이 캐릭터로 확실히 이어 붙였습니다">확실</span>' : c === 2 ? `<span class="cfb c2" title="비슷한 캐릭터 — 확실하지 않아 이어 붙이지 않았습니다">유력${n > 1 ? ` · 후보 ${n}명` : ''}</span>` : ''; }
 const CK = ['닉네임 변경', '길드 변경', '월드 이전', '서버 이전'];
-async function changes(){ if(!D.chg) D.chg = getJSON('data/changes.json').catch(() => null); return D.chg; }
+async function changes(){ if(!D.chg) D.chg = getJSON('data/changes.json').then(trLegalize).catch(() => null); return D.chg; }
+// v1.3.0: 월드/서버 이전은 공지된 이전 기간에만 가능. 수집기(v1.3.0~)가 만든 데이터에는 windows 가 들어 있고 이미 걸러져 있음.
+// 예전 데이터(windows 없음)는 아래 확인된 일정으로 화면에서 거름. 일정 출처: 스토브 공지사항 '월드/서버 이전 사전 안내'
+const TR_OLD3 = ['린드리스', '울란', '디엔'], TR_NEW2 = ['가르바나', '디나페리'];
+const TR_SEED = [
+  {s: '2026-11-25', e: '2026-11-28', world: TR_OLD3, server: TR_NEW2, id: '14630114'},
+  {s: '2026-10-14', e: '2026-10-17', world: TR_OLD3, server: TR_NEW2, id: '14570860'},
+  {s: '2026-09-02', e: '2026-09-05', world: TR_OLD3, server: TR_NEW2, id: '14438523'},
+  {s: '2026-07-22', e: '2026-07-25', world: TR_OLD3, server: TR_NEW2, id: '13993310'},
+  {s: '2026-06-10', e: '2026-06-13', world: TR_OLD3, server: TR_NEW2, id: '13525538'},
+  {s: '2026-05-06', e: '2026-05-08', world: [], server: ['디나페리'], id: '13178687'}];
+const TR_GRACE = 1;   // 날짜 하나만 아는 기록은 [날짜-1, 날짜]로 확인 → 기간 끝난 다음 날 수집분까지 인정 (수집기와 같음)
+function dayNum(iso){ return Math.round((Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(2024, 0, 1)) / 864e5); }
+function trWins(ch){ return ((ch && ch.windows && ch.windows.length) ? ch.windows : TR_SEED).map(w => ({...w, sn: dayNum(w.s), en: dayNum(w.e)})); }
+// 날짜 d0~d1 사이에 열린 이전 기간이 있고 대상이면 그 기간을 돌려줌. kind 2 월드 이전(wa→wb 이름), 3 서버 이전(wa 이름)
+function trWinOf(W, kind, d0, d1, wa, wb){
+  for(const w of W){ if(w.sn > d1 || w.en < d0) continue;
+    if(kind === 2 ? (w.world.includes(wa) && (!wb || w.world.includes(wb))) : w.server.includes(wa)) return w; }
+  return null;
+}
+function trLegalize(ch){
+  if(!ch || ch.windows) return ch;      // 수집기가 이미 거른 데이터
+  const W = trWins(null); let n = 0;
+  const wn = v => typeof v === 'number' ? wName(v) : v;
+  const ok = (kind, d, wa, wb) => !!trWinOf(W, kind, d - TR_GRACE, d, wn(wa), wb == null ? null : wn(wb));
+  // 변경 목록: [날짜, 종류, 월드, 서버, 닉네임, 이전, 이후, ..., 확실도(12)] — 유력 월드 이전은 이전/이후 칸이 '월드 NN서버 · 이름' 형식
+  const wOf = t => (String(t).match(/^(\S+)/) || [])[1] || '';
+  const badDay = new Set();   // 기간 밖 월드 이전으로 이어 붙인 날 → 그날 같은 캐릭터의 닉네임 · 길드 · 서버 변경도 제외
+  ch.list = (ch.list || []).filter(x => {
+    let good = true;
+    if(x[1] === 2) good = x[12] === 2 ? ok(2, x[0], wOf(x[5]), wOf(x[6])) : ok(2, x[0], x[5], x[6]);
+    else if(x[1] === 3) good = ok(3, x[0], x[2]);
+    if(!good){ n++; if(x[1] === 2 && x[12] !== 2) badDay.add(x[0] + '|' + x[2] + '|' + x[4]); }
+    return good;
+  });
+  if(badDay.size){
+    ch.list = ch.list.filter(x => !(x[12] !== 2 && badDay.has(x[0] + '|' + x[2] + '|' + x[4])) || (n++, false));
+    ch.names = (ch.names || []).map(([w, nm, l, seen]) => [w, nm, l.filter(e => !badDay.has(e[0] + '|' + w + '|' + nm)), seen]).filter(x => x[2].length);
+  }
+  ch.moved = (ch.moved || []).map(m => {
+    if(m.lv === '유력'){ const e = m.e[0]; return (e[1] === 2 ? ok(2, e[0], e[2], e[3]) : ok(3, e[0], m.w)) ? m : null; }
+    const bd = new Set(m.e.filter(e => e[1] === 2 && !ok(2, e[0], e[2], e[3])).map(e => e[0]));
+    const e = m.e.filter(e => !bd.has(e[0]) && (e[1] === 3 ? ok(3, e[0], m.w) : true));
+    if(!e.some(e => e[1] >= 2)) return null;
+    const last = Math.max(...e.filter(e => e[1] >= 2).map(e => e[0]));
+    return {...m, e, last};
+  }).filter(Boolean);
+  ch.launder = (ch.launder || []).filter(x => !x || !x.from || !x.to ? false
+    : x.from.w !== x.to.w ? ok(2, x.d, x.from.w, x.to.w) : ok(3, x.d, x.from.w));
+  ch.illegal = n; ch.trLegacy = true;
+  return ch;
+}
+// 평시 / 이전 기간 상태: 이전 기간(끝난 뒤 14일까지 — 사라졌다 나타난 캐릭터를 잇는 기간)이면 이전 · 세탁 의심, 평시엔 닉네임 변경 확인
+const TR_LINK_DAYS = 14;
+function trMode(ch){
+  const W = trWins(ch), t = ch.date;
+  const act = W.find(w => w.sn <= t && w.en >= t - TR_LINK_DAYS), next = W.filter(w => w.sn > t).sort((a, b) => a.sn - b.sn)[0];
+  return {act, next, now: !!act && t <= act.en};
+}
+const STOVE = id => `https://page.onstove.com/l9/global/view/${encodeURIComponent(id)}`;
+function trModeBar(ch){
+  const {act, next, now} = trMode(ch), cal = ch.trinfo?.calendar;
+  const lk = w => w.id ? ` <a href="${STOVE(w.id)}" target="_blank" rel="noopener">공지</a>` : '';
+  const main = act ? `<span class="cfb c1">${now ? '이전 기간 진행 중' : '이전 기간 반영 중'}</span> ${trWinLabel(act)}${lk(act)} — 월드 · 서버 이전과 <b>세탁 의심</b>을 찾습니다${now ? '' : ' (기간 끝난 뒤 14일까지 늦게 나타난 캐릭터도 이어 붙임)'}`
+    : `<span class="cfb c3">평시</span> 이전 기간이 아니라 <b>닉네임 변경</b>만 찾습니다 (월드 · 서버가 다른 캐릭터와는 잇지 않음)`;
+  return `<div class="note trmode">${main}${next && next !== act ? ` · 다음 이전 기간 <b>${trWinLabel(next)}</b>${lk(next)}` : ''}${cal?.id ? ` · <a href="${STOVE(cal.id)}" target="_blank" rel="noopener">${esc(cal.t.replace(/\s*\(.*\)$/, ''))}</a>` : ''}</div>`;
+}
+function trWinLabel(w){ return `${w.s.slice(5).replace('-', '/')}~${w.e.slice(5).replace('-', '/')}`; }
+function trWinNote(ch){
+  const W = trWins(ch).slice(0, 4), today = ch.date;
+  const row = w => `<div class="trwin ${w.sn <= today && today <= w.en ? 'now' : w.sn > today ? 'next' : ''}"><b>${trWinLabel(w)}</b>${w.sn > today ? ' <span class="cfb c2">예정</span>' : w.sn <= today && today <= w.en ? ' <span class="cfb c1">진행 중</span>' : ''}
+    <span class="sub" style="display:inline">${w.world.length ? '월드 이전 ' + esc(w.world.join(' · ')) : ''}${w.world.length && w.server.length ? ' / ' : ''}${w.server.length ? '서버 이전 ' + esc(w.server.join(' · ')) : ''}</span>${lk(w)}</div>`;
+  const lk = w => w.id ? ` <a href="${STOVE(w.id)}" target="_blank" rel="noopener">공지</a>` : '';
+  return `<div class="note trwins"><b>월드 · 서버 이전은 공지된 이전 기간에만 가능</b>합니다. 이 기간(+다음 날 수집분)에 대상 월드 · 서버에서 옮긴 것만 이전으로 인정하고, 기간 밖에 월드 · 서버가 달라 보이는 경우는 같은 캐릭터로 잇지 않습니다 (같은 이름을 다른 캐릭터가 쓰게 된 경우 등).
+    ${W.map(row).join('')}${ch.illegal ? `<div class="sub">이전 기간 밖이라 제외한 기록 ${nf(ch.illegal)}건</div>` : ''}</div>`;
+}
+// 세탁 의심 이유 (화면 문장)
+function ldReasons(x, W){
+  const r = [], f = x.from, t = x.to, wch = f.w !== t.w;
+  const win = wch ? trWinOf(W, 2, x.d - 1, x.d, wName(f.w), wName(t.w)) : trWinOf(W, 3, x.d - 1, x.d, wName(f.w));
+  const at = `${dayStr(x.d).slice(5)}${win ? ` (이전 기간 ${trWinLabel(win)})` : ''}`;
+  r.push(wch ? `${at} <b>월드 이전</b> — ${esc(wName(f.w))} ${f.s ? serverLabel(f.s) : ''} → ${esc(wName(t.w))} ${t.s ? serverLabel(t.s) : ''}`
+    : `${at} <b>서버 이전</b> — ${esc(wName(f.w))} ${serverLabel(f.s)} → ${serverLabel(t.s)}`);
+  if(f.n !== t.n) r.push(`<b>닉네임 변경</b> — ${esc(f.n)} → ${esc(t.n)} (이전과 동시에 이름을 바꿔 찾기 어렵게 함)`);
+  const fg = (f.g || '').trim(), tg = (t.g || '').trim();
+  if(fg !== tg) r.push(`<b>길드 변경</b> — ${fg ? esc(fg) : '길드 없음'} → ${tg ? esc(tg) : '길드 없음'}`);
+  if((x.flags || []).includes('의상 변경')) r.push('<b>의상 변경</b> — 이전 전후 겉모습(의상)이 다름');
+  if((x.flags || []).includes('기준 밖에서 발견')) r.push('<b>수집 기준 밖에서 발견</b> — 옮긴 뒤 랭킹 기준 밖 자리에서 찾음 (눈에 덜 띄는 곳으로 옮김)');
+  if(x.hops >= 2) r.push(`<b>반복</b> — 최근 45일 동안 이전 · 닉네임 변경을 ${nf(x.hops)}번 한 캐릭터`);
+  if(x.now && (x.now.n !== t.n || x.now.w !== t.w)) r.push(`이후에도 다시 바뀜 — 지금 ${esc(wName(x.now.w))} · ${esc(x.now.n)}`);
+  r.push(x.lv === '확실' ? '같은 캐릭터 판정: <b>확실</b> (직업 · 업적점수 · 마스터리 · 전문화 · 전투력이 맞는 캐릭터가 한 명뿐)'
+    : `같은 캐릭터 판정: <b>유력</b>${x.nc > 1 ? ` (후보 ${nf(x.nc)}명` : ' ('}${x.score != null ? `${x.nc > 1 ? ' · ' : ''}일치도 ${esc(x.score)}%` : ''}) — 다른 캐릭터일 수 있음`);
+  return r;
+}
+
 function ckBadge(k){ return `<span class="ckb ck${k}">${CK[k]}</span>`; }
 function ckFromTo(k, a, b){
   const f = v => v ? esc(v) : '<span class="sub" style="display:inline">없음</span>';
@@ -1023,18 +1260,34 @@ function ldPlace(p, o){
   if(!o) return `${ws} ${sv} · <span class="old">${esc(p.n)}</span> · ${g}`;
   return `${hl(o.w !== p.w, ws)} ${hl(o.w !== p.w || o.s !== p.s, sv)} · ${hl(o.n !== p.n, `<b>${esc(p.n)}</b>`)} · ${hl((o.g || '') !== (p.g || ''), g)}`;
 }
-function launderSecs(ch, {inP, inWS, q, perLbl}){
-  if(!Array.isArray(ch.launder) && !Array.isArray(ch.gone)) return '';   // 예전 수집 데이터
+// v1.3.0: 변경 이력 소메뉴 — 변경 목록 · 이전 추적 · 세탁 의심 · 행방 불명 · 연관 추정 (한 화면에 다 펼치지 않음)
+const CGTABS = [['list', '변경 목록'], ['moved', '이전 추적'], ['ld', '세탁 의심'], ['gone', '행방 불명'], ['assoc', '연관 추정']];
+let CGTAB = lsGet('l9cgtab', 'list'); if(typeof CGTAB !== 'string') CGTAB = 'list';
+if(!CGTABS.some(t => t[0] === CGTAB)) CGTAB = 'list';
+function setCgTab(v){ CGTAB = v; lsSet('l9cgtab', v); }
+function cgResetFilters(){ Object.assign(CG, {per: 7, kind: -1, w: 0, s: 0, q: '', cf: 0, ld: '', lcf: 0, mcf: 0, mk: -1, msort: 'd', gsort: 'd', ak: ''}); cgResetMore(); saveCG(); }
+function cgResetMore(){ CG.page = 0; CG.mv = 24; CG.asm = 24; CG.ldm = 24; CG.gom = 50; }
+const cgNote = (html, open) => `<details class="note cgnote" ${open ? 'open' : ''}><summary>이 화면 설명</summary><div>${html}</div></details>`;
+const cgMore = (act, n, unit) => n > 0 ? `<div class="pager"><button class="btn" data-act="${act}">더 보기 (${nf(n)}${unit} 남음)</button></div>` : '';
+// 이전 세탁 의심 · 행방 불명 (수집기가 만든 launder · gone — 예전 데이터에는 없음)
+function launderData(ch, {inP, inWS, q}){
+  if(!Array.isArray(ch.launder) && !Array.isArray(ch.gone)) return null;   // 예전 수집 데이터
   const ok = x => x && x.from && x.to;
   let ld = (ch.launder || []).filter(x => ok(x) && inP(x.d) && (inWS(x.from.w, x.from.s) || inWS(x.to.w, x.to.s)));
   if(q) ld = ld.filter(x => [x.from.n, x.to.n, x.now?.n, x.from.g, x.to.g].some(v => (v || '').includes(q)));
+  if(CG.lcf) ld = ld.filter(x => (x.lv === '확실' ? 1 : 2) === CG.lcf);
   const lc = {'높음': 0, '보통': 0, '낮음': 0}, seenFrom = new Set();
   for(const x of [...ld].sort((a, b) => (LDLV[b.level] || 0) - (LDLV[a.level] || 0))){ const fk = key(x.from.w, x.from.n) + '|' + x.d; if(seenFrom.has(fk)) continue; seenFrom.add(fk); if(x.level in lc) lc[x.level]++; }
   if(CG.ld) ld = ld.filter(x => x.level === CG.ld);
   ld.sort((a, b) => (LDLV[b.level] || 0) - (LDLV[a.level] || 0) || b.d - a.d || (b.score ?? -1) - (a.score ?? -1));
   let gone = (ch.gone || []).filter(x => (CG.per >= 999 || x.last >= ch.date - CG.per) && inWS(x.w, x.s));
   if(q) gone = gone.filter(x => (x.n || '').includes(q) || (x.g || '').includes(q));
-  gone.sort((a, b) => b.last - a.last || (b.bp || 0) - (a.bp || 0));
+  gone.sort(CG.gsort === 'bp' ? (a, b) => (b.bp || 0) - (a.bp || 0) || b.last - a.last : (a, b) => b.last - a.last || (b.bp || 0) - (a.bp || 0));
+  return {ld, lc, gone};
+}
+function ldTab(L, perLbl, ch){
+  if(!L) return '<div class="empty" style="padding:14px 16px">예전 수집 데이터에는 이전 세탁 의심 기록이 없습니다</div>';
+  const {ld, lc} = L, W = trWins(ch);
   const stat = x => [['전투력', nf(x.bp)], ['대표 마스터리', x.mc ? `${esc(mname(x.mc))} ${nf(x.ml)}` : nf(x.ml)], ['전문화', nf(x.sp)], ['업적점수', nf(x.ach)]]
     .map(([l, v]) => `<span><small>${l}</small> <b class="dg">${v}</b></span>`).join('');
   const card = x => {
@@ -1044,91 +1297,145 @@ function launderSecs(ch, {inP, inWS, q, perLbl}){
       <div class="ldft"><div class="ldr"><span class="ldk">이전 전</span><span class="ldv">${ldPlace(x.from)}</span></div>
         <div class="ldr"><span class="ldk">이전 후</span><span class="ldv">${ldPlace(x.to, x.from)}</span></div>
         ${x.now && (x.now.n !== x.to.n || x.now.w !== x.to.w) ? `<div class="ldr"><span class="ldk">지금</span><span class="ldv">${esc(wName(x.now.w))} · <b>${esc(x.now.n)}</b></span></div>` : ''}</div>
-      ${fl.length ? `<div class="ldflags">${fl.map(f => `<span class="ldf">${esc(f)}</span>`).join('')}</div>` : ''}
+      <div class="ldwhy"><div class="sub">의심 이유 · ${ldBadge(x.level, '')} 단계</div><ul>${ldReasons(x, W).map(t => `<li>${t}</li>`).join('')}</ul></div>
       <div class="ldstat">${stat(x)}</div>
       <div class="mvf">${x.hops >= 2 ? `<span class="ldhop">이전 · 닉변 ${nf(x.hops)}회</span>` : ''}${chgTrackBtn((x.now || x.to).w, (x.now || x.to).n, x.seen)}</div></div>`;
   };
   const LVN = {'높음': '이전 + 닉네임 변경 + 길드나 의상까지 변경, 또는 최근 이전 · 닉네임 변경을 2번 이상', '보통': '이전 + 닉네임 변경', '낮음': '닉네임은 그대로 두고 이전 + 길드 변경'};
-  let h = `<section class="ov fr" style="margin-top:14px" id="cgld">${NODES}
-    <div class="bar"><span class="sid g">이전 세탁 의심</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(ld.length)}명 · ${esc(perLbl)}</span></div>
-    <div class="note">월드 · 서버를 옮기면서 <b>닉네임 · 길드 · 의상</b>을 바꾼 캐릭터입니다. 단계는 함께 바꾼 정도입니다.
+  return cgNote(`월드 · 서버를 옮기면서 <b>닉네임 · 길드 · 의상</b>을 바꾼 캐릭터입니다. 단계는 함께 바꾼 정도입니다.
       ${Object.entries(LVN).map(([l, t]) => `<div class="ldn">${ldBadge(l, '')} ${t}</div>`).join('')}
-      <b class="cfb c1">확실</b> <b class="cfb c2">유력</b>은 이전 전후가 <b>같은 캐릭터라는 판정</b>의 확실도입니다 (유력: 후보가 여럿이거나 일부 값이 다름).</div>
-    <div class="kpis ldk3">${Object.keys(lc).map(l => `<div class="kpi"><div class="lb">${ldBadge(l)} (명)</div><div class="v">${nf(lc[l])}</div><div class="s">${esc(perLbl)}${CG.w ? ' · ' + esc(wName(CG.w)) : ''}</div></div>`).join('')}</div>
-    <div class="ctrls"><span class="lbl">단계</span>${seg('cg-ld', CG.ld, [['', '전체'], ['높음', '높음'], ['보통', '보통'], ['낮음', '낮음']])}<span class="ldhint">기간 · 월드 · 서버 · 찾기는 위 변경 목록과 같이 적용 (이전 전 또는 후가 맞으면 표시)</span></div>
-    ${ld.length ? `<div class="mvgrid ldgrid">${ld.slice(0, CG.ldm).map(card).join('')}</div>
-      ${ld.length > CG.ldm ? `<div class="pager"><button class="btn" data-act="cg-ldmore">더 보기 (${nf(ld.length - CG.ldm)}명 남음)</button></div>` : ''}`
-      : '<div class="empty" style="padding:14px 16px">조건에 맞는 이전 세탁 의심 캐릭터가 없습니다</div>'}
-  </section>`;
-  h += `<section class="ov fr" style="margin-top:14px" id="cggone">${NODES}
-    <div class="bar"><span class="sid g">행방 불명</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(gone.length)}명 · ${esc(perLbl)}${ch.gone_total > (ch.gone || []).length ? ` · 전체 ${nf(ch.gone_total)}명 중 최근 ${nf((ch.gone || []).length)}명만 표시` : ''}</span></div>
-    <div class="note">수집 대상에서 <b>사라졌지만 아직 이어 붙일 캐릭터를 찾지 못한</b> 캐릭터입니다. 사라진 뒤 <b>14일 동안</b> 같은 캐릭터를 계속 찾습니다. 캐릭터 삭제나 수집 기준(순위) 밖으로 밀려난 경우일 수도 있습니다.</div>
+      <b class="cfb c1">확실</b> <b class="cfb c2">유력</b>은 이전 전후가 <b>같은 캐릭터라는 판정</b>의 확실도입니다 (유력: 후보가 여럿이거나 일부 값이 다름). 이전 전 또는 이전 후의 월드 · 서버가 위 필터에 맞으면 표시합니다.`)
+    + trWinNote(ch) + `<div class="kpis ldk3">${Object.keys(lc).map(l => `<div class="kpi"><div class="lb">${ldBadge(l)} (명)</div><div class="v">${nf(lc[l])}</div><div class="s">${esc(perLbl)}${CG.w ? ' · ' + esc(wName(CG.w)) : ''}</div></div>`).join('')}</div>
+    <div class="ctrls"><span class="lbl">단계</span>${seg('cg-ld', CG.ld, [['', '전체'], ['높음', '높음'], ['보통', '보통'], ['낮음', '낮음']])}
+      <span class="lbl">확실도</span>${seg('cg-lcf', CG.lcf, [[0, '전체'], [1, '확실'], [2, '유력']])}</div>
+    <div class="sec">세탁 의심 목록 <small>${nf(ld.length)}명 · 단계 높은 순 · 카드를 누르면 캐릭터 정보</small></div>
+    ${ld.length ? `<div class="mvgrid ldgrid">${ld.slice(0, CG.ldm).map(card).join('')}</div>${cgMore('cg-ldmore', ld.length - CG.ldm, '명')}`
+      : '<div class="empty" style="padding:14px 16px">조건에 맞는 이전 세탁 의심 캐릭터가 없습니다</div>'}`;
+}
+function goneTab(L, ch){
+  if(!L) return '<div class="empty" style="padding:14px 16px">예전 수집 데이터에는 행방 불명 기록이 없습니다</div>';
+  const {gone} = L;
+  return cgNote(`수집 대상에서 <b>사라졌지만 아직 이어 붙일 캐릭터를 찾지 못한</b> 캐릭터입니다. 사라진 뒤 <b>14일 동안</b> 같은 캐릭터를 계속 찾습니다. 캐릭터 삭제나 수집 기준(순위) 밖으로 밀려난 경우일 수도 있습니다.`)
+    + `<div class="ctrls"><span class="lbl">정렬</span>${seg('cg-gsort', CG.gsort, [['d', '마지막 확인 최근 순'], ['bp', '전투력 높은 순']])}</div>
+    <div class="sec">행방 불명 목록 <small>${nf(gone.length)}명${ch.gone_total > (ch.gone || []).length ? ` · 전체 ${nf(ch.gone_total)}명 중 최근 ${nf((ch.gone || []).length)}명만 보관` : ''}</small></div>
     ${gone.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk gone"><tr><th>마지막 확인</th><th class="l">캐릭터</th><th class="cgws">월드</th><th class="cgws">서버</th><th class="l hide-s">길드</th><th class="hide-s">직업</th><th>전투력</th><th>대표 마스터리</th><th>전문화</th></tr>
       ${gone.slice(0, CG.gom).map(x => `<tr><td class="dg" style="font-size:16px">${esc(dayStr(x.last).slice(5))}</td>
         <td class="l"><div class="nm">${esc(x.n)}</div><div class="sub msub">${esc(wName(x.w))} ${serverLabel(x.s)}${x.g ? ' · ' + esc(x.g) : ''}</div></td>
         <td class="cgws">${esc(wName(x.w))}</td><td class="cgws dg" style="font-size:16px">${x.s ? pad2(x.s) : '--'}</td>
         <td class="l hide-s">${x.g ? esc(x.g) : '<span class="sub">-</span>'}</td><td class="hide-s">${esc(x.j || '--')}</td>
         <td><span class="big" style="font-size:18px">${nf(x.bp)}</span></td><td><span class="dg" style="font-size:17px">${nf(x.ml)}</span><div class="sub">${esc(mname(x.mc))}</div></td>
-        <td><span class="dg" style="font-size:17px">${nf(x.sp)}</span></td></tr>`).join('')}</table></div>
-      ${gone.length > CG.gom ? `<div class="pager"><button class="btn" data-act="cg-gomore">더 보기 (${nf(gone.length - CG.gom)}명 남음)</button></div>` : ''}`
-      : '<div class="empty" style="padding:14px 16px">조건에 맞는 행방 불명 캐릭터가 없습니다</div>'}
-  </section>`;
-  return h;
+        <td><span class="dg" style="font-size:17px">${nf(x.sp)}</span></td></tr>`).join('')}</table></div>${cgMore('cg-gomore', gone.length - CG.gom, '명')}`
+      : '<div class="empty" style="padding:14px 16px">조건에 맞는 행방 불명 캐릭터가 없습니다</div>'}`;
+}
+function assocTab(as){
+  const AK = [['', '전체'], ['사라진 캐릭터', '사라진 캐릭터'], ['다른 캐릭터의 예전 이름', '예전 이름'], ['같은 월드 현재 캐릭터', '현재 캐릭터']];
+  return cgNote(`닉네임을 바꾼 캐릭터의 <b>새 이름</b>이 다른 캐릭터의 이름과 비슷한 경우입니다. 예를 들어 A가 B 캐릭터를 사서 A와 관련된 이름(원래 이름, 번호만 붙인 이름 등)으로 바꾼 경우를 찾습니다.
+      비교 대상: 최근 30일 안에 <b>사라진 캐릭터</b> · 다른 캐릭터가 <b>예전에 쓰던 이름</b> · 같은 월드의 <b>현재 캐릭터</b>(3글자 이상).
+      <b>이름만 비교한 것이라 같은 사람이라는 근거가 되지 않습니다. 참고용으로만 보세요.</b>`, true)
+    + `<div class="ctrls"><span class="lbl">비교 대상</span>${seg('cg-ak', CG.ak, AK)}</div>
+    <div class="sec">연관 추정 목록 <small>${nf(as.length)}건 · 참고용</small></div>
+    ${as.length ? `<div class="asgrid">${as.slice(0, CG.asm).map(a => `<div class="ascard">
+        <div class="ash ${a.seen ? 'rkrow' : ''}" ${a.seen ? `data-act="char" data-w="${a.w}" data-n="${esc(a.n)}"` : ''}><div><span class="sub" style="display:inline">${esc(dayStr(a.d).slice(5))} 닉네임 변경</span>
+          <div class="nh"><span class="old">${esc(a.old)}</span><span class="arrow">→</span><b>${esc(a.n)}</b></div>
+          <div class="sub">${esc(wName(a.w))} ${serverLabel(a.s)} · ${esc(a.g || '길드 없음')}</div></div>
+          <div class="mvr"><span class="big" style="font-size:18px">${nf(a.bp)}</span><div class="sub">전투력</div></div></div>
+        <div class="asrel"><div class="sub">비슷한 이름</div>${a.rel.map(r => `<div class="asr"><span class="cfb c3">${esc(r.why)}</span>
+          <b>${esc(r.n)}</b> <span class="sub" style="display:inline">${esc(r.kind)}${r.now ? ` (지금 이름: ${esc(r.now)})` : ''} · ${esc(wName(r.w))} ${r.s ? serverLabel(r.s) : ''}${r.g ? ' · ' + esc(r.g) : ''}${r.kind === '사라진 캐릭터' ? ` · 마지막 ${esc(dayStr(r.d).slice(5))}` : ''}${r.bp ? ' · ' + nf(r.bp) : ''}</span></div>`).join('')}</div></div>`).join('')}</div>${cgMore('cg-asmore', as.length - CG.asm, '건')}`
+      : '<div class="empty" style="padding:14px 16px">조건에 맞는 연관 추정 닉네임 변경이 없습니다</div>'}`;
+}
+function movedTab(mv, ch){
+  return cgNote(`월드나 서버를 옮긴 캐릭터를 자동으로 따라가서, 옮긴 뒤 <b>닉네임과 길드가 어떻게 바뀌었는지</b> 순서대로 보여줍니다. 별도로 등록할 필요 없이 이전이 확인되면 자동으로 이 목록에 들어옵니다.<br>
+      <b class="cfb c1">확실</b> 직업 · 업적점수 · 마스터리 3종 · 전문화 · 전투력이 모두 맞는 캐릭터가 한 명뿐이라 같은 캐릭터로 이어 붙임 &nbsp;
+      <b class="cfb c2">유력</b> 비슷하지만 후보가 여럿이거나 일부 값이 달라 단정할 수 없음 (추적은 자동으로 옮기지 않고, [추적]에서 직접 바꿀 수 있음)`)
+    + trWinNote(ch) + `<div class="ctrls"><span class="lbl">이전 종류</span>${seg('cg-mk', CG.mk, [[-1, '전체'], [2, '월드 이전'], [3, '서버 이전']])}
+      <span class="lbl">확실도</span>${seg('cg-mcf', CG.mcf, [[0, '전체'], [1, '확실'], [2, '유력']])}
+      <span class="lbl">정렬</span>${seg('cg-msort', CG.msort, [['d', '최근 순'], ['bp', '전투력 순']])}</div>
+    <div class="sec">이전 캐릭터 목록 <small>${nf(mv.length)}명 · 카드를 누르면 캐릭터 정보</small></div>
+    ${mv.length ? `<div class="mvgrid">${mv.slice(0, CG.mv).map(m => {
+      const ev = m.e.slice().sort((a, b) => a[0] - b[0] || (b[1] >= 2) - (a[1] >= 2) || a[1] - b[1]);
+      return `<div class="mvcard ${m.seen ? 'rkrow' : ''} ${m.lv === '유력' ? 'lk2' : ''}" ${m.seen ? `data-act="char" data-w="${m.w}" data-n="${esc(m.n)}"` : ''}>
+        <div class="mvlv">${m.lv === '유력' ? `<span class="cfb c2">유력${m.nc > 1 ? ` · 후보 ${m.nc}명` : ''}</span><span class="sub" style="display:inline"> 일치도 ${m.score}% · 확실하지 않아 이어 붙이지 않음</span>` : '<span class="cfb c1">확실</span><span class="sub" style="display:inline"> 같은 캐릭터로 이어 붙임</span>'}</div>
+        ${m.lv === '유력' && m.from ? `<div class="sub">이전 전: ${esc(wName(m.from[0]))} ${m.from[2] ? serverLabel(m.from[2]) : ''} · <b>${esc(m.from[1])}</b> · ${esc(m.from[3] || '길드 없음')}</div>` : ''}
+        <div class="mvh"><div><div class="nm">${esc(m.n)}</div><div class="sub">${esc(wName(m.w))} ${serverLabel(m.s)} · ${m.g ? esc(m.g) : '길드 없음'}</div></div>
+          <div class="mvr"><span class="big" style="font-size:20px">${nf(m.bp)}</span><div class="sub">전투력</div></div></div>
+        <ol class="tl">${ev.map(e => `<li><span class="dg">${esc(dayStr(e[0]).slice(5))}</span>${ckBadge(e[1])}<span class="nh">${ckFromTo(e[1], e[2], e[3])}</span></li>`).join('')}</ol>
+        <div class="mvf">${chgTrackBtn(m.w, m.n, m.seen)}</div></div>`; }).join('')}</div>${cgMore('cg-more', mv.length - CG.mv, '명')}`
+      : '<div class="empty" style="padding:14px 16px">조건에 맞는 월드 · 서버 이전 캐릭터가 없습니다</div>'}`;
 }
 const CGSORT = [['d', '날짜'], ['kind', '종류'], ['name', '캐릭터명'], ['world', '월드'], ['server', '서버'], ['bp', '전투력'], ['ml', '대표 마스터리'], ['sp', '전문화']];
 const CGDIR0 = {d: -1, kind: 1, name: 1, world: 1, server: 1, bp: -1, ml: -1, sp: -1};   // 처음 고를 때 방향
 async function pageChg(){
   if(!readyWorlds().length) return noData();
   const ch = await changes();
-  let h = `<section class="ov fr">${NODES}
-    <div class="bar"><span class="sid g">변경 이력</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">기준일 ${esc(D.meta.date)} · ${critText()}</span></div>`;
-  if(!ch) return h + `<div class="note">변경 이력은 v0.9.0 이후 첫 자동 수집부터 기록됩니다. 전날 수집 결과와 비교하므로 이틀 이상 수집되면 표시됩니다.</div></section>`;
+  if(!ch) return `<section class="ov fr">${NODES}<div class="bar"><span class="sid g">변경 이력</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">기준일 ${esc(D.meta.date)} · ${critText()}</span></div>
+    <div class="note">변경 이력은 v0.9.0 이후 첫 자동 수집부터 기록됩니다. 전날 수집 결과와 비교하므로 이틀 이상 수집되면 표시됩니다.</div></section>`;
   const today = ch.date, per = CG.per;
   const amap = new Map((ch.assoc || []).map(a => [a.d + '|' + key(a.w, a.n), a]));
   const th = (k, l, cls = '') => `<th class="${cls} sortable ${CG.sort === k ? 'on' : ''}" data-act="cg-sorth" data-v="${k}" title="눌러서 정렬">${l}${CG.sort === k ? (CG.dir < 0 ? ' ▼' : ' ▲') : ''}</th>`;
   const assocOf = x => x[1] === 0 ? amap.get(x[0] + '|' + key(x[2], x[4])) : null;
   const inP = d => per >= 999 || d > today - per;
   const q = CG.q.trim();
-  const ws0 = readyWorlds(), svs = CG.w ? (ws0.find(w => w.code === CG.w)?.servers || []) : [];
+  const ws = readyWorlds(), svs = CG.w ? (ws.find(w => w.code === CG.w)?.servers || []) : [];
   if(!svs.includes(CG.s)) CG.s = 0;
   const inWS = (w, sv) => (!CG.w || w === CG.w) && (!CG.s || sv === CG.s);
   // 이전 닉네임: 캐릭터(월드|현재 닉네임) → 예전 닉네임들
   const olds = new Map(); for(const [w, n, l] of ch.names || []) olds.set(key(w, n), l);
   const oldNames = (w, n) => (olds.get(key(w, n)) || []).map(e => e[1]).filter(Boolean);
   const qm = x => { const o = oldNames(x[2], x[4]); return x[4].includes(q) || String(x[5]).includes(q) || String(x[6]).includes(q) || (x[7] || '').includes(q) || o.some(v => v.includes(q)); };
+  const perLbl = per === 1 ? '최근 수집일' : per >= 999 ? `전체 (최근 ${ch.days}일)` : `최근 ${per}일`;
+  // --- 소메뉴마다 목록 (건수를 소메뉴에 같이 보여주려고 먼저 계산) ---
   const base = ch.list.filter(x => inP(x[0]) && inWS(x[2], x[3]));
   const cnt = [0, 0, 0, 0]; let lk = 0; for(const x of base){ if(x[12] === 2) lk++; else cnt[x[1]]++; }
   let view = base.filter(x => (CG.kind < 0 || x[1] === CG.kind) && (!CG.cf || x[12] === CG.cf));
   if(q) view = view.filter(qm);
-  // 예전 수집기로 만든 기록에는 전문화 · 업적점수가 없어서 지금 수집 데이터로 채움
-  if(view.some(x => x[15] === undefined)){
-    const rows = new Map(); for(const j of await allWorlds()) for(const r of j.rows) rows.set(key(r[C.w], r[C.n]), r);
-    for(const x of ch.list){ if(x[15] !== undefined) continue; const r = rows.get(key(x[2], x[4])); x[15] = r ? r[C.sp] : null; x[16] = r ? r[C.ach] : null; if(r && x[9] == null){ x[9] = r[C.ml]; x[10] = mcode(r[C.mc]); } }
-  }
-  const SV = {d: x => x[0], kind: x => x[1], name: x => x[4], world: x => wName(x[2]), server: x => x[3] || 0, bp: x => x[8], ml: x => x[9], sp: x => x[15]};
-  const sv = SV[CG.sort] || SV.d, dir = CG.dir || -1;
-  view = view.map((x, i) => [x, i]).sort(([a, i], [b, j]) => {
-    const va = sv(a), vb = sv(b);
-    if(va == null && vb == null) return i - j; if(va == null) return 1; if(vb == null) return -1;
-    const c = typeof va === 'string' ? va.localeCompare(vb, 'ko') : va - vb;
-    return c ? c * dir : (b[0] - a[0]) || i - j;
-  }).map(([x]) => x);
-  const pages = Math.max(1, Math.ceil(view.length / PAGE)); CG.page = Math.min(CG.page, pages - 1);
-  const slice = view.slice(CG.page * PAGE, CG.page * PAGE + PAGE);
-  const ws = readyWorlds();
-  const perLbl = per === 1 ? '최근 수집일' : per >= 999 ? `전체 (최근 ${ch.days}일)` : `최근 ${per}일`;
-  h += `<div class="note">매일 자동 수집 때 <b>전날 수집 결과와 비교</b>해 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터를 바로 기록합니다. 공식 사이트가 하루 한 번(10~12시) 갱신되므로 하루 단위로 쌓입니다.
-      닉네임을 바꾸거나 월드를 옮긴 캐릭터는 직업 · 전투력 · 업적점수 · 전문화가 거의 같은 캐릭터를 찾아 자동으로 이어 붙입니다.</div>
-    <div class="kpis">${CK.map((l, i) => `<div class="kpi"><div class="lb">${l} (명)</div><div class="v">${nf(cnt[i])}</div><div class="s">${esc(perLbl)}${CG.w ? ' · ' + esc(wName(CG.w)) : ''}</div></div>`).join('')}
-      <div class="kpi"><div class="lb">유력 후보 (건)</div><div class="v" style="color:var(--amb)">${nf(lk)}</div><div class="s">확실하지 않아 이어 붙이지 않음</div></div></div>
-    <div class="ctrls"><span class="lbl">기간</span>${seg('cg-per', per, [[1, '최근 수집일'], [7, '7일'], [30, '30일'], [999, '전체']])}
-      <span class="lbl">종류</span>${seg('cg-kind', CG.kind, [[-1, '전체'], [0, '닉네임'], [1, '길드'], [2, '월드 이전'], [3, '서버 이전']])}
-      <span class="lbl">확실도</span>${seg('cg-cf', CG.cf, [[0, '전체'], [1, '확실'], [2, '유력']])}
-      <span class="lbl">월드</span><select data-ch="cg-w"><option value="0">전체</option>${ws.map(w => `<option value="${w.code}" ${w.code === CG.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>
+  let mv = (ch.moved || []).filter(m => inP(m.last) && ((inWS(m.w, m.s)) || (!CG.s && m.e.some(e => e[1] === 2 && (e[2] === wName(CG.w) || e[3] === wName(CG.w))))));
+  if(q) mv = mv.filter(m => m.n.includes(q) || (m.g || '').includes(q) || m.e.some(e => String(e[2]).includes(q) || String(e[3]).includes(q)) || oldNames(m.w, m.n).some(v => v.includes(q)));
+  if(CG.mk >= 2) mv = mv.filter(m => m.e.some(e => e[1] === CG.mk));
+  if(CG.mcf) mv = mv.filter(m => (m.lv === '유력' ? 2 : 1) === CG.mcf);
+  mv = mv.slice().sort(CG.msort === 'bp' ? (a, b) => (b.bp || 0) - (a.bp || 0) : (a, b) => (b.last || 0) - (a.last || 0) || (b.bp || 0) - (a.bp || 0));
+  let as = (ch.assoc || []).filter(a => inP(a.d) && (inWS(a.w, a.s) || a.rel.some(r => inWS(r.w, r.s))));
+  if(q) as = as.filter(a => a.n.includes(q) || a.old.includes(q) || (a.g || '').includes(q) || a.rel.some(r => r.n.includes(q) || (r.now || '').includes(q) || (r.g || '').includes(q)));
+  if(CG.ak) as = as.map(a => ({...a, rel: a.rel.filter(r => r.kind === CG.ak)})).filter(a => a.rel.length);
+  const L = launderData(ch, {inP, inWS, q});
+  const N = {list: view.length, moved: mv.length, ld: L ? L.ld.length : null, gone: L ? L.gone.length : null, assoc: as.length};
+  const tabs = `<div class="trtabs cgtabs fr">${CGTABS.map(([v, l]) =>
+    `<button class="${CGTAB === v ? 'on' : ''}" data-act="cg-tab" data-v="${v}">${l}<small>${N[v] == null ? '-' : nf(N[v]) + (v === 'list' || v === 'assoc' ? '건' : '명')}</small></button>`).join('')}</div>`;
+  const dirty = per !== 7 || CG.w || CG.q || CG.kind >= 0 || CG.cf || CG.ld || CG.lcf || CG.mcf || CG.mk >= 0 || CG.ak;
+  const head = `<div class="bar"><span class="sid g">변경 이력 · ${esc((CGTABS.find(t => t[0] === CGTAB) || CGTABS[0])[1])}</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">기준일 ${esc(D.meta.date)} · ${critText()}</span></div>
+    <div class="ctrls cgcom"><span class="lbl">기간</span>${seg('cg-per', per, [[1, '최근 수집일'], [7, '7일'], [30, '30일'], [999, '전체']])}
+      <span class="lbl">월드</span><select data-ch="cg-w"><option value="0">전체</option>${ws.map(w => `<option value="${esc(w.code)}" ${w.code === CG.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>
       <span class="lbl">서버</span><select data-ch="cg-s" ${CG.w ? '' : 'disabled title="월드를 먼저 고르세요"'}><option value="0">전체</option>${svs.map(v => `<option value="${v}" ${v === CG.s ? 'selected' : ''}>${serverLabel(v)}</option>`).join('')}</select>
+      <span class="sp"></span><input class="q" data-in="cg-q" value="${esc(CG.q)}" placeholder="닉네임(이전 닉네임 포함) · 길드 찾기">
+      ${dirty ? '<button class="btn" data-act="cg-reset" title="모든 소메뉴의 필터를 처음 상태로">필터 초기화</button>' : ''}</div>`;
+  let body = '';
+  if(CGTAB === 'moved') body = movedTab(mv, ch);
+  else if(CGTAB === 'ld') body = ldTab(L, perLbl, ch);
+  else if(CGTAB === 'gone') body = goneTab(L, ch);
+  else if(CGTAB === 'assoc') body = assocTab(as);
+  else {
+    // 예전 수집기로 만든 기록에는 전문화 · 업적점수가 없어서 지금 수집 데이터로 채움
+    if(view.some(x => x[15] === undefined)){
+      const rows = new Map(); for(const j of await allWorlds()) for(const r of j.rows) rows.set(key(r[C.w], r[C.n]), r);
+      for(const x of ch.list){ if(x[15] !== undefined) continue; const r = rows.get(key(x[2], x[4])); x[15] = r ? r[C.sp] : null; x[16] = r ? r[C.ach] : null; if(r && x[9] == null){ x[9] = r[C.ml]; x[10] = mcode(r[C.mc]); } }
+    }
+    const SV = {d: x => x[0], kind: x => x[1], name: x => x[4], world: x => wName(x[2]), server: x => x[3] || 0, bp: x => x[8], ml: x => x[9], sp: x => x[15]};
+    const sv = SV[CG.sort] || SV.d, dir = CG.dir || -1;
+    view = view.map((x, i) => [x, i]).sort(([a, i], [b, j]) => {
+      const va = sv(a), vb = sv(b);
+      if(va == null && vb == null) return i - j; if(va == null) return 1; if(vb == null) return -1;
+      const c = typeof va === 'string' ? va.localeCompare(vb, 'ko') : va - vb;
+      return c ? c * dir : (b[0] - a[0]) || i - j;
+    }).map(([x]) => x);
+    const pages = Math.max(1, Math.ceil(view.length / PAGE)); CG.page = Math.min(CG.page, pages - 1);
+    const slice = view.slice(CG.page * PAGE, CG.page * PAGE + PAGE);
+    body = cgNote(`매일 자동 수집 때 <b>전날 수집 결과와 비교</b>해 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터를 바로 기록합니다. 공식 사이트가 하루 한 번(10~12시) 갱신되므로 하루 단위로 쌓입니다.
+      닉네임을 바꾸거나 월드를 옮긴 캐릭터는 직업 · 전투력 · 업적점수 · 전문화가 거의 같은 캐릭터를 찾아 자동으로 이어 붙입니다.`)
+    + `<div class="kpis">${CK.map((l, i) => `<div class="kpi"><div class="lb">${l} (명)</div><div class="v">${nf(cnt[i])}</div><div class="s">${esc(perLbl)}${CG.w ? ' · ' + esc(wName(CG.w)) : ''}</div></div>`).join('')}
+      <div class="kpi"><div class="lb">유력 후보 (건)</div><div class="v" style="color:var(--amb)">${nf(lk)}</div><div class="s">확실하지 않아 이어 붙이지 않음</div></div></div>
+    <div class="ctrls"><span class="lbl">종류</span>${seg('cg-kind', CG.kind, [[-1, '전체'], [0, '닉네임'], [1, '길드'], [2, '월드 이전'], [3, '서버 이전']])}
+      <span class="lbl">확실도</span>${seg('cg-cf', CG.cf, [[0, '전체'], [1, '확실'], [2, '유력']])}
       <span class="lbl">정렬</span><select data-ch="cg-sort">${CGSORT.map(([v, l]) => `<option value="${v}" ${v === CG.sort ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <button class="btn cgdir" data-act="cg-dir" title="오름차순 / 내림차순 바꾸기">${dir < 0 ? '내림차순 ▼' : '오름차순 ▲'}</button>
-      <span class="sp"></span><input class="q" data-in="cg-q" value="${esc(CG.q)}" placeholder="닉네임(이전 닉네임 포함) · 길드 찾기"></div>
+      <button class="btn cgdir" data-act="cg-dir" title="오름차순 / 내림차순 바꾸기">${dir < 0 ? '내림차순 ▼' : '오름차순 ▲'}</button></div>
     ${q ? await oldNameNote(q, ch, CG.w) : ''}
     <div class="sec" id="cglist">변경 목록 <small>${nf(view.length)}건 · ${esc((CGSORT.find(x => x[0] === CG.sort) || CGSORT[0])[1])} ${dir < 0 ? '내림차순' : '오름차순'} · 표 제목을 눌러도 정렬 · 줄을 누르면 캐릭터 정보</small></div>
     <div class="tbl" style="margin:0;border:0"><table class="rk chg"><tr>${th('d', '날짜', 'cgd')}${th('kind', '종류')}${th('name', '캐릭터 (현재)', 'l')}${th('world', '월드', 'cgws')}${th('server', '서버', 'cgws')}<th class="l">이전 → 이후</th><th class="l hide-s">현재 길드</th>${th('bp', '전투력')}${th('ml', '대표 마스터리', 'hide-s')}${th('sp', '전문화')}<th class="hide-s">업적점수</th><th></th></tr>
@@ -1139,52 +1446,13 @@ async function pageChg(){
       <td class="l nh">${ckFromTo(x[1], x[5], x[6])}</td><td class="l hide-s">${x[7] ? esc(x[7]) : '<span class="sub">-</span>'}</td>
       <td><span class="big" style="font-size:18px">${nf(x[8])}</span></td><td class="hide-s"><span class="dg" style="font-size:17px">${nf(x[9])}</span><div class="sub">${esc(mname(x[10]))}</div></td>
       <td><span class="dg" style="font-size:17px">${nf(x[15])}</span></td><td class="hide-s"><span class="dg" style="font-size:17px">${nf(x[16])}</span></td>
-      <td style="white-space:nowrap">${chgTrackBtn(x[2], x[4], x[11])}</td></tr>`).join('') || '<tr><td colspan="12" class="emptyrow">이 기간에 기록된 변경이 없습니다</td></tr>'}
+      <td style="white-space:nowrap">${chgTrackBtn(x[2], x[4], x[11])}</td></tr>`).join('') || '<tr><td colspan="12" class="emptyrow">이 조건에 맞는 변경이 없습니다</td></tr>'}
     </table></div>
     ${pages > 1 ? `<div class="pager"><button class="btn" data-act="cg-page" data-p="0" ${CG.page ? '' : 'disabled'}>처음</button><button class="btn" data-act="cg-page" data-p="${CG.page - 1}" ${CG.page ? '' : 'disabled'}>이전</button>
       <span class="pi">${CG.page + 1} / ${pages} 쪽</span>
-      <button class="btn" data-act="cg-page" data-p="${CG.page + 1}" ${CG.page < pages - 1 ? '' : 'disabled'}>다음</button><button class="btn" data-act="cg-page" data-p="${pages - 1}" ${CG.page < pages - 1 ? '' : 'disabled'}>끝</button></div>` : ''}
-  </section>`;
-  // 월드 · 서버 이전 캐릭터 자동 추적
-  let mv = (ch.moved || []).filter(m => inP(m.last) && ((inWS(m.w, m.s)) || (!CG.s && m.e.some(e => e[1] === 2 && (e[2] === wName(CG.w) || e[3] === wName(CG.w))))));
-  if(q) mv = mv.filter(m => m.n.includes(q) || (m.g || '').includes(q) || m.e.some(e => String(e[2]).includes(q) || String(e[3]).includes(q)) || oldNames(m.w, m.n).some(v => v.includes(q)));
-  // 연관 닉네임 추정 (참고)
-  let as = (ch.assoc || []).filter(a => inP(a.d) && (inWS(a.w, a.s) || a.rel.some(r => inWS(r.w, r.s))));
-  if(q) as = as.filter(a => a.n.includes(q) || a.old.includes(q) || (a.g || '').includes(q) || a.rel.some(r => r.n.includes(q) || (r.now || '').includes(q) || (r.g || '').includes(q)));
-  h += launderSecs(ch, {inP, inWS, q, perLbl});
-  h += `<section class="ov fr" style="margin-top:14px" id="cgassoc">${NODES}
-    <div class="bar"><span class="sid g">닉네임 연관 추정 <span class="cfb c3">참고</span></span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(as.length)}건 · ${esc(perLbl)}</span></div>
-    <div class="note">닉네임을 바꾼 캐릭터의 <b>새 이름</b>이 다른 캐릭터의 이름과 비슷한 경우입니다. 예를 들어 A가 B 캐릭터를 사서 A와 관련된 이름(원래 이름, 번호만 붙인 이름 등)으로 바꾼 경우를 찾습니다.
-      비교 대상: 최근 30일 안에 <b>사라진 캐릭터</b> · 다른 캐릭터가 <b>예전에 쓰던 이름</b> · 같은 월드의 <b>현재 캐릭터</b>(3글자 이상).
-      <b>이름만 비교한 것이라 같은 사람이라는 근거가 되지 않습니다. 참고용으로만 보세요.</b></div>
-    ${as.length ? `<div class="asgrid">${as.slice(0, CG.mv).map(a => `<div class="ascard">
-        <div class="ash ${a.seen ? 'rkrow' : ''}" ${a.seen ? `data-act="char" data-w="${a.w}" data-n="${esc(a.n)}"` : ''}><div><span class="sub" style="display:inline">${esc(dayStr(a.d).slice(5))} 닉네임 변경</span>
-          <div class="nh"><span class="old">${esc(a.old)}</span><span class="arrow">→</span><b>${esc(a.n)}</b></div>
-          <div class="sub">${esc(wName(a.w))} ${serverLabel(a.s)} · ${esc(a.g || '길드 없음')}</div></div>
-          <div class="mvr"><span class="big" style="font-size:18px">${nf(a.bp)}</span><div class="sub">전투력</div></div></div>
-        <div class="asrel"><div class="sub">비슷한 이름</div>${a.rel.map(r => `<div class="asr"><span class="cfb c3">${esc(r.why)}</span>
-          <b>${esc(r.n)}</b> <span class="sub" style="display:inline">${esc(r.kind)}${r.now ? ` (지금 이름: ${esc(r.now)})` : ''} · ${esc(wName(r.w))} ${r.s ? serverLabel(r.s) : ''}${r.g ? ' · ' + esc(r.g) : ''}${r.kind === '사라진 캐릭터' ? ` · 마지막 ${esc(dayStr(r.d).slice(5))}` : ''}${r.bp ? ' · ' + nf(r.bp) : ''}</span></div>`).join('')}</div></div>`).join('')}</div>
-      ${as.length > CG.mv ? `<div class="pager"><button class="btn" data-act="cg-more">더 보기 (${nf(as.length - CG.mv)}건 남음)</button></div>` : ''}`
-      : '<div class="empty" style="padding:14px 16px">이 기간에 연관 추정된 닉네임 변경이 없습니다</div>'}
-  </section>`;
-  h += `<section class="ov fr" style="margin-top:14px">${NODES}
-    <div class="bar"><span class="sid g">월드 · 서버 이전 캐릭터 자동 추적</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${nf(mv.length)}명 · ${esc(perLbl)}</span></div>
-    <div class="note">월드나 서버를 옮긴 캐릭터를 자동으로 따라가서, 옮긴 뒤 <b>닉네임과 길드가 어떻게 바뀌었는지</b> 순서대로 보여줍니다. 별도로 등록할 필요 없이 이전이 확인되면 자동으로 이 목록에 들어옵니다.<br>
-      <b class="cfb c1">확실</b> 직업 · 업적점수 · 마스터리 3종 · 전문화 · 전투력이 모두 맞는 캐릭터가 한 명뿐이라 같은 캐릭터로 이어 붙임 &nbsp;
-      <b class="cfb c2">유력</b> 비슷하지만 후보가 여럿이거나 일부 값이 달라 단정할 수 없음 (추적은 자동으로 옮기지 않고, [추적]에서 직접 바꿀 수 있음)</div>
-    ${mv.length ? `<div class="mvgrid">${mv.slice(0, CG.mv).map(m => {
-      const ev = m.e.slice().sort((a, b) => a[0] - b[0] || (b[1] >= 2) - (a[1] >= 2) || a[1] - b[1]);
-      return `<div class="mvcard ${m.seen ? 'rkrow' : ''} ${m.lv === '유력' ? 'lk2' : ''}" ${m.seen ? `data-act="char" data-w="${m.w}" data-n="${esc(m.n)}"` : ''}>
-        <div class="mvlv">${m.lv === '유력' ? `<span class="cfb c2">유력${m.nc > 1 ? ` · 후보 ${m.nc}명` : ''}</span><span class="sub" style="display:inline"> 일치도 ${m.score}% · 확실하지 않아 이어 붙이지 않음</span>` : '<span class="cfb c1">확실</span><span class="sub" style="display:inline"> 같은 캐릭터로 이어 붙임</span>'}</div>
-        ${m.lv === '유력' && m.from ? `<div class="sub">이전 전: ${esc(wName(m.from[0]))} ${m.from[2] ? serverLabel(m.from[2]) : ''} · <b>${esc(m.from[1])}</b> · ${esc(m.from[3] || '길드 없음')}</div>` : ''}
-        <div class="mvh"><div><div class="nm">${esc(m.n)}</div><div class="sub">${esc(wName(m.w))} ${serverLabel(m.s)} · ${m.g ? esc(m.g) : '길드 없음'}</div></div>
-          <div class="mvr"><span class="big" style="font-size:20px">${nf(m.bp)}</span><div class="sub">전투력</div></div></div>
-        <ol class="tl">${ev.map(e => `<li><span class="dg">${esc(dayStr(e[0]).slice(5))}</span>${ckBadge(e[1])}<span class="nh">${ckFromTo(e[1], e[2], e[3])}</span></li>`).join('')}</ol>
-        <div class="mvf">${chgTrackBtn(m.w, m.n, m.seen)}</div></div>`; }).join('')}</div>
-      ${mv.length > CG.mv ? `<div class="pager"><button class="btn" data-act="cg-more">더 보기 (${nf(mv.length - CG.mv)}명 남음)</button></div>` : ''}`
-      : '<div class="empty" style="padding:14px 16px">이 기간에 월드 · 서버를 옮긴 캐릭터가 없습니다</div>'}
-  </section>`;
-  return h;
+      <button class="btn" data-act="cg-page" data-p="${CG.page + 1}" ${CG.page < pages - 1 ? '' : 'disabled'}>다음</button><button class="btn" data-act="cg-page" data-p="${pages - 1}" ${CG.page < pages - 1 ? '' : 'disabled'}>끝</button></div>` : ''}`;
+  }
+  return tabs + `<section class="ov fr" id="cgtop">${NODES}${head}${trModeBar(ch)}${body}</section>`;
 }
 
 /* ============================================================ 통합레벨 계산기 */
@@ -1403,7 +1671,7 @@ function pageHelp(){
       <dt>랭킹</dt><dd>대표 마스터리 또는 전투력 순위 — 전체 월드 / 월드 / 서버, 직업 필터, 닉네임 · 길드 찾기. 전문화 레벨도 함께 표시합니다.</dd>
       <dt>TOP 20</dt><dd>대표 마스터리 TOP 20과 전투력 TOP 20.</dd>
       <dt>통계</dt><dd>캐릭터 수 · 평균 · 최고, 전투력 · 마스터리 · 전문화 분포, 직업 · 무기 통계, 서버별 비교, 순위 컷.</dd>
-      <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다. 월드 · 서버 필터, 이전 닉네임으로도 찾기(지금 그 이름을 쓰는 다른 캐릭터와 구분 표시), 캐릭터를 산 뒤 관련 닉네임으로 바꾼 경우를 찾는 <b>닉네임 연관 추정(참고)</b>, 월드 · 서버를 옮기며 닉네임 · 길드 · 의상을 바꾼 <b>이전 세탁 의심</b>과 <b>행방 불명</b> 캐릭터 목록이 있습니다.</dd>
+      <dt>변경 이력</dt><dd>위쪽 소메뉴로 <b>변경 목록</b> · <b>이전 추적</b> · <b>세탁 의심</b> · <b>행방 불명</b> · <b>연관 추정</b>을 나눠 봅니다(소메뉴에 건수 표시). 기간 · 월드 · 서버 · 찾기는 모든 소메뉴에 같이 적용되고, 소메뉴마다 종류 · 확실도 · 단계 · 비교 대상 · 정렬 필터가 따로 있습니다. 각 화면 설명은 [이 화면 설명]을 눌러 펼칩니다. 월드 · 서버 이전은 스토브 공지에 나온 <b>이전 기간</b>(+다음 날 수집분)에 대상 월드 · 서버에서 옮긴 것만 인정합니다. 일정은 월초(주요 일정 캘린더) · 평시 7일마다 · 이전 기간 7일 전부터 매일 공지사항으로 확인합니다. 평시에는 닉네임 변경만, 이전 기간에는 이전 · 세탁 의심까지 찾습니다(위쪽 상태 표시). 세탁 의심 카드에는 <b>의심 이유</b>(이전 · 닉네임 · 길드 · 의상 변경, 반복 횟수, 같은 캐릭터 판정)가 적혀 있습니다. 변경 목록은 매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 이전 추적에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다. 월드 · 서버 필터, 이전 닉네임으로도 찾기(지금 그 이름을 쓰는 다른 캐릭터와 구분 표시), 캐릭터를 산 뒤 관련 닉네임으로 바꾼 경우를 찾는 <b>닉네임 연관 추정(참고)</b>, 월드 · 서버를 옮기며 닉네임 · 길드 · 의상을 바꾼 <b>이전 세탁 의심</b>과 <b>행방 불명</b> 캐릭터 목록이 있습니다.</dd>
       <dt>경험치 계산기</dt><dd>사냥 결과 창 캡처를 끌어다 놓거나 Ctrl+V로 붙여넣으면 사냥터 · 사냥 시간 · M 경험치를 읽어 1분당 · 1시간당 경험치를 기록하고, 가장 효율 좋은 사냥터를 ★로 표시합니다. 사냥터 이름 앞뒤에 잘못 읽힌 글자는 자동으로 떼어냅니다. 잘못 읽은 기록은 [수정]으로 고칠 수 있습니다.</dd>
       <dt>통합레벨 계산기</dt><dd>내 · 상대 통합 레벨을 넣으면 PvP 레벨 차이 보정(피해량 · 치명타 · 명중 · 상태이상)을 보여줍니다. 무기 11종 레벨 · 경험치 %로 내 통합 레벨을 계산하고, 상대는 무기 레벨만으로 나올 수 있는 통합 레벨과 확률을 추정합니다. 추적 캐릭터의 마스터리를 불러올 수 있습니다.</dd>
       <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 위쪽 소메뉴로 <b>캐릭터 목록</b>(20명씩 쪽 넘김) · <b>길드별</b>(길드로 묶어 인원 · 평균/최고 전투력, 누르면 그 길드원만 목록) · <b>종합 현황</b> · <b>상세</b>(이전/다음으로 넘겨 보기)를 나눠 봅니다. 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
@@ -1435,7 +1703,7 @@ function pageHelp(){
 }
 
 /* ============================================================ TOP 20 */
-let TOPTAB = lsGet('l9toptab', 'ml');   // 휴대폰: TOP 20 두 순위 중 보이는 쪽
+let TOPTAB = lsEnum('l9toptab', ['ml', 'bp'], 'ml');   // 휴대폰: TOP 20 두 순위 중 보이는 쪽
 async function pageTop(){
   if(!readyWorlds().length) return noData();
   const [bp, ml] = await Promise.all([sorted('bp', ''), sorted('ml', '')]);
@@ -1456,7 +1724,7 @@ async function pageTop(){
       <span style="margin-left:auto;font-size:12px;color:var(--dim)">기준일 ${esc(D.meta.date)}</span></div>
     ${partialNote()}<div class="ctrls">${scopeCtrls()}</div>
     <div class="toptab">${seg('top-tab', TOPTAB, [['ml', '대표 마스터리 TOP 20'], ['bp', '전투력 TOP 20']])}</div>
-    <div class="tops" data-tab="${TOPTAB}">
+    <div class="tops" data-tab="${esc(TOPTAB)}">
       <div class="tml"><div class="sec tsec" style="border-top:0"><span class="tbadge">마스터리</span>대표 마스터리 TOP 20 <small>같은 레벨이면 전투력 순</small></div>${podium(ml, 'ml')}${table(ml, 'ml')}</div>
       <div class="tbp"><div class="sec tsec" style="border-top:0"><span class="tbadge">전투력</span>전투력 TOP 20</div>${podium(bp, 'bp')}${table(bp, 'bp')}</div>
     </div></section>`;
@@ -1582,7 +1850,7 @@ function pageExp(){
         <div class="sec" style="margin:14px -16px 12px;border-bottom:1px solid var(--line2)">${e ? '기록 수정' : '직접 입력'} <small>캡처를 잘못 읽었으면 표에서 [수정]</small></div>
         <div class="efields">
           <div class="f"><label>사냥터</label><input id="exPlace" value="${esc(e?.place || '')}" placeholder="예: 그림자 숲"></div>
-          <div class="f"><label>획득 경험치 (M)</label><input id="exGain" inputmode="decimal" value="${e ? e.exp : ''}" placeholder="예: 678,513,354 또는 6.8억"></div>
+          <div class="f"><label>획득 경험치 (M)</label><input id="exGain" inputmode="decimal" value="${e ? esc(e.exp) : ''}" placeholder="예: 678,513,354 또는 6.8억"></div>
         </div>
         <div class="f" style="margin-top:10px"><label>사냥 시간</label>
           <div class="tsplit"><input id="exH" inputmode="numeric" value="${e ? Math.floor(e.secs / 3600) || '' : ''}" placeholder="시간"><input id="exM" inputmode="numeric" value="${e ? Math.floor(e.secs % 3600 / 60) || '' : ''}" placeholder="분"><input id="exS" inputmode="numeric" value="${e ? e.secs % 60 || '' : ''}" placeholder="초"></div></div>
@@ -1602,7 +1870,7 @@ function pageExp(){
       ${rs.map(r => { const ph = r.exp / r.secs * 3600, pm = r.exp / r.secs * 60, top = best && basePlace(r.place) === best.place;
         return `<tr class="${top ? 'mine' : ''}"><td class="dg" style="font-size:16px">${esc(r.at.slice(5, 16).replace('T', ' '))}</td><td class="l"><span class="nm">${esc(r.place)}</span></td>
           <td>${fmtDur(r.secs)}</td><td>${esc(krNum(r.exp))}</td><td><span class="big" style="font-size:18px">${esc(krNum(pm))}</span></td><td><span class="big">${esc(krNum(ph))}</span></td>
-          <td style="white-space:nowrap"><button class="mini-btn" data-act="exp-edit" data-id="${r.id}">수정</button> <button class="mini-btn" data-act="exp-del" data-id="${r.id}">삭제</button></td></tr>`; }).join('')
+          <td style="white-space:nowrap"><button class="mini-btn" data-act="exp-edit" data-id="${esc(r.id)}">수정</button> <button class="mini-btn" data-act="exp-del" data-id="${esc(r.id)}">삭제</button></td></tr>`; }).join('')
         || '<tr><td colspan="7" class="emptyrow">아직 기록이 없습니다</td></tr>'}</table></div>
     <div class="sec">기록별 ${kl} 경험치 <small>색 = 사냥터 · ★ = 가장 효율 좋은 사냥터</small></div>
     <div style="padding:14px 16px">${expTrend(kk)}</div>
@@ -1638,8 +1906,11 @@ function parseExpText(text){
       if(m) out.place = m[0].trim();
     }
   }
+  if(out.exp > 1e15) out.exp = null;     // 말이 안 되는 큰 숫자는 인식 실패로 처리
+  if(out.secs > 1e7) out.secs = 0;
   if(out.exp == null){ // "Exp" 글자를 못 읽은 경우: (0.0238%) 처럼 % 가 붙은 첫 숫자
     for(const l of lines){ const x = l.match(/(\d[\d,.]{3,})\s*\(\s*[\d.]+\s*%/); if(x){ out.exp = Number(x[1].replace(/\D/g, '')); break; } }
+    if(out.exp > 1e15) out.exp = null;
   }
   return out;
 }
@@ -1648,7 +1919,7 @@ function loadTess(){
   if(TESS) return TESS;
   TESS = new Promise((ok, bad) => {
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'; s.integrity = 'sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F'; s.crossOrigin = 'anonymous';
     s.onload = async () => { try{ ok(await Tesseract.createWorker('kor+eng')); }catch(e){ bad(e); } };
     s.onerror = () => bad(new Error('글자 인식 도구를 불러오지 못했습니다 (인터넷 연결 확인)'));
     document.head.appendChild(s);
@@ -1705,7 +1976,7 @@ function uniqPlace(p){
   return `${p}-${i}`;
 }
 function addRec(place, exp, secs){
-  const r = {id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 19), place: uniqPlace(cleanPlace(place) || '알 수 없는 사냥터'), exp, secs};
+  const r = {id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 19), place: uniqPlace(cleanPlace(place) || '알 수 없는 사냥터').slice(0, 100), exp, secs};
   expRecs().push(r); saveStore(); return r;
 }
 async function addShots(files){
@@ -1955,7 +2226,7 @@ function drawCands(){
   const gn = ST.gnote || {};
   const item = guild
     ? x => { const g = x.g, nc = (gn[g.k] || []).length; return `<button type="button" data-g="${esc(g.k)}"><b>${esc(g.g)}</b> <small style="color:var(--dim)">${esc(gLabel(g))} · ${nf(g.rows.length)}명 · 평균 ${krShort(g.avg)}</small>${nc ? `<span class="cfb c3">코멘트 ${nc}</span>` : ''}</button>`; }
-    : x => `<button type="button" data-w="${x.w}" data-n="${esc(x.n)}">${esc(x.n)} <small style="color:var(--dim)">${esc(wName(x.w))}${x.r ? ` ${serverLabel(x.r[C.s])} · ${esc(x.r[C.g] || '길드 없음')} · ${krShort(x.r[C.bp])}` : ' · 수집 데이터에 없음 (누르면 사이트에서 조회)'}</small></button>`;
+    : x => `<button type="button" data-w="${Number(x.w)}" data-n="${esc(x.n)}">${esc(x.n)} <small style="color:var(--dim)">${esc(wName(x.w))}${x.r ? ` ${serverLabel(x.r[C.s])} · ${esc(x.r[C.g] || '길드 없음')} · ${krShort(x.r[C.bp])}` : ' · 수집 데이터에 없음 (누르면 사이트에서 조회)'}</small></button>`;
   $('#cands').innerHTML = NB(view.slice(0, SR.lim).map(item).join('')
     + (view.length > SR.lim ? `<button type="button" class="smore" data-more="1">더 보기 (${nf(view.length - SR.lim)}${guild ? '개' : '명'} 남음)</button>` : ''));
 }
@@ -1966,7 +2237,7 @@ function openMastery(k){
   $('#mTitle').innerHTML = '마스터리 입력 <small>' + esc(c.t.n) + '</small>';
   $('#mDate').value = todayKST();
   $('#mForm').innerHTML = masteryList().map(([code, name]) => { const m = c.ms[code];
-    return `<div class="f"><label>${esc(name)}</label><input data-code="${code}" inputmode="numeric" value="${m ? m.level : ''}"><small>${m ? esc(m.date + ' ' + m.source) : '미입력'}</small></div>`; }).join('');
+    return `<div class="f"><label>${esc(name)}</label><input data-code="${esc(code)}" inputmode="numeric" value="${m ? esc(m.level) : ''}"><small>${m ? esc(m.date + ' ' + m.source) : '미입력'}</small></div>`; }).join('');
   $('#mInteg').value = c.integ ? c.integ.l : '';
   $('#mPct').value = c.integ && c.integ.p != null ? c.integ.p : '';
   $('#dlgM').showModal();
@@ -1974,7 +2245,7 @@ function openMastery(k){
 function openEdit(k){
   const c = cardOf(k); if(!c) return;
   $('#dlgE').dataset.k = k;
-  $('#eWorld').innerHTML = (D.meta?.worlds || [{code: c.t.w, name: wName(c.t.w)}]).map(w => `<option value="${w.code}" ${w.code === c.t.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+  $('#eWorld').innerHTML = (D.meta?.worlds || [{code: c.t.w, name: wName(c.t.w)}]).map(w => `<option value="${esc(w.code)}" ${w.code === c.t.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
   $('#eName').value = c.t.n;
   $('#dlgE').showModal();
 }
@@ -1987,7 +2258,7 @@ function download(name, text, type){
 async function exportCsv(){
   if(!ST.tracked.length){ toast('추적 중인 캐릭터가 없습니다'); return; }
   const CARDS = await buildCards();
-  const q = v => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const q = v => { if(typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) v = "'" + v; v = v == null ? '' : String(v); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const lines = [['기준일', '월드', '닉네임', '직업', '전투력', '업적점수', '대표 마스터리', '마스터리 레벨', '마스터리 랭크', '전문화'].join(',')];
   for(const c of CARDS){ const job = c.r ? jobName(c.r[C.j]) : (c.h ? jobName(c.h.j) : '');
     for(const s of c.series) lines.push([s.d, wName(c.t.w), c.t.n, job, s.bp, s.ach, mname(s.mc), s.ml, s.mr, s.sp].map(q).join(',')); }
@@ -2046,7 +2317,8 @@ function bgmUnlock(){
 }
 window.onYouTubeIframeAPIReady = bgmCreate;
 function bgmInit(){
-  BG.list = lsGet('l9bgmList', DEFAULT_PLAYLIST); BG.vol = Number(lsGet('l9bgmVol', 40)); BG.mini = lsGet('l9bgmMini', '1') === '1';
+  BG.list = lsGet('l9bgmList', DEFAULT_PLAYLIST); if(!/^[A-Za-z0-9_-]{10,80}$/.test(BG.list)) BG.list = DEFAULT_PLAYLIST;
+  BG.vol = Number(lsGet('l9bgmVol', 40)); if(!Number.isFinite(BG.vol)) BG.vol = 40; BG.vol = Math.min(100, Math.max(0, BG.vol)); BG.mini = lsGet('l9bgmMini', '1') === '1';
   BG.shuffle = lsGet('l9bgmShuf', '0') === '1'; BG.auto = lsGet('l9bgmAuto', '1') === '1';
   $('#bgmVol').value = BG.vol; $('#bgmList').value = 'https://www.youtube.com/playlist?list=' + BG.list;
   bgmUI();
@@ -2112,7 +2384,7 @@ document.addEventListener('click', async ev => {
     else if(act === 'rk-by'){ RK.by = b.dataset.v; RK.page = 0; lsSet('l9rank', JSON.stringify({by: RK.by})); render(); }
     else if(act === 'top-tab'){ TOPTAB = b.dataset.v; lsSet('l9toptab', TOPTAB); await render(); }
     else if(act === 'my-reset'){ ST.cur = null; ST.recent = []; saveSession(); await render(); window.scrollTo({top: 0}); toast('캐릭터 화면을 초기화했습니다 (추적 · 메모는 그대로)'); }
-    else if(act === 'cg-per'){ CG.per = Number(b.dataset.v); CG.page = 0; CG.mv = 24; CG.ldm = 24; CG.gom = 50; saveCG(); await render(); }
+    else if(act === 'cg-per'){ CG.per = Number(b.dataset.v); CG.page = 0; CG.mv = 24; CG.asm = 24; CG.ldm = 24; CG.gom = 50; saveCG(); await render(); }
     else if(act === 'cg-sorth'){ if(CG.sort === b.dataset.v) CG.dir = -(CG.dir || -1); else { CG.sort = b.dataset.v; CG.dir = CGDIR0[CG.sort] || -1; } CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-dir'){ CG.dir = -(CG.dir || -1); CG.page = 0; saveCG(); await render(); }
     else if(act === 'cg-cf'){ CG.cf = Number(b.dataset.v); CG.page = 0; saveCG(); await render(); }
@@ -2122,6 +2394,15 @@ document.addEventListener('click', async ev => {
     else if(act === 'cg-ld'){ CG.ld = b.dataset.v; CG.ldm = 24; saveCG(); await render(); }
     else if(act === 'cg-ldmore'){ CG.ldm += 24; await render(); }
     else if(act === 'cg-gomore'){ CG.gom += 50; await render(); }
+    else if(act === 'cg-asmore'){ CG.asm += 24; await render(); }
+    else if(act === 'cg-tab'){ setCgTab(b.dataset.v); CG.page = 0; await render(); }
+    else if(act === 'cg-reset'){ cgResetFilters(); await render(); }
+    else if(act === 'cg-lcf'){ CG.lcf = Number(b.dataset.v); CG.ldm = 24; saveCG(); await render(); }
+    else if(act === 'cg-mcf'){ CG.mcf = Number(b.dataset.v); CG.mv = 24; saveCG(); await render(); }
+    else if(act === 'cg-mk'){ CG.mk = Number(b.dataset.v); CG.mv = 24; saveCG(); await render(); }
+    else if(act === 'cg-msort'){ CG.msort = b.dataset.v; CG.mv = 24; saveCG(); await render(); }
+    else if(act === 'cg-gsort'){ CG.gsort = b.dataset.v; CG.gom = 50; saveCG(); await render(); }
+    else if(act === 'cg-ak'){ CG.ak = b.dataset.v; CG.asm = 24; saveCG(); await render(); }
     else if(act === 'rk-page'){ RK.page = Math.max(0, Number(b.dataset.p)); await render(); window.scrollTo({top: $('#main').offsetTop - 10}); }
     else if(act === 'rk-goto'){ const i = Number(b.dataset.i); RK.q = ''; RK.page = Math.floor(i / PAGE); await render(); document.getElementById('rk-' + i)?.scrollIntoView({block:'center'}); }
     else if(act === 'track'){ ev.stopPropagation(); track(b.dataset.w, b.dataset.n); }
@@ -2139,6 +2420,7 @@ document.addEventListener('click', async ev => {
       const g = (await guildIndex()).get(k); if(!g) return;
       const add = g.rows.filter(r => !isTracked(r));
       if(!add.length){ toast('이미 모두 추적 중입니다'); return; }
+      if(ST.tracked.length + add.length > LIM.tracked){ toast(`추적은 최대 ${LIM.tracked}명까지입니다 (지금 ${ST.tracked.length}명 · 추가하려는 ${add.length}명)`); return; }
       if(!confirm(`${g.g} (${gLabel(g)}) 길드원 ${add.length}명을 모두 추적할까요?`)) return;
       for(const r of add) ST.tracked.push({w: r[C.w], n: r[C.n], added: todayKST(), ev: []});
       saveStore(); if(D.local) localApi('api/tracked', {chars: ST.tracked.map(t => [t.w, t.n])}).catch(() => {});
@@ -2194,6 +2476,7 @@ document.addEventListener('click', async ev => {
       const l = parseList($('#bgmList').value); if(!l){ toast('재생목록 주소를 확인하세요 (list= 가 들어간 주소)'); return; }
       BG.list = l; lsSet('l9bgmList', l); BG.autoplay = true; bgmCreate(); toast('재생목록을 바꿨습니다');
     }
+    else if(act === 'lock'){ if(!confirm('이 기기에서 잠그고 입장 화면으로 이동합니다.\n(이 기기의 추적·메모 기록은 지우지 않습니다)')) return; sealForget(); location.replace('index.html'); }
     else if(act === 'quit'){
       if(confirm('프로그램을 종료할까요?')){
         try{ await localApi('api/quit', {}); }catch(e){}
@@ -2213,15 +2496,15 @@ document.addEventListener('change', e => {
   else if(t === 'tr-pick'){ TRSEL = e.target.value; lsSet('l9trsel', TRSEL); render(); }
   else if(t === 'tr-w'){ TRF.w = Number(e.target.value); TRF.page = 0; saveTRF(); render(); }
   else if(t === 'tr-sort'){ TRF.sort = e.target.value; saveTRF(); render(); }
-  else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.s = 0; CG.page = 0; CG.mv = 24; CG.ldm = 24; CG.gom = 50; saveCG(); render(); }
+  else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.s = 0; CG.page = 0; CG.mv = 24; CG.asm = 24; CG.ldm = 24; CG.gom = 50; saveCG(); render(); }
   else if(t === 'cg-sort'){ CG.sort = e.target.value; CG.dir = CGDIR0[CG.sort] || -1; CG.page = 0; saveCG(); render(); }
-  else if(t === 'cg-s'){ CG.s = Number(e.target.value); CG.page = 0; CG.mv = 24; CG.ldm = 24; CG.gom = 50; saveCG(); render(); }
+  else if(t === 'cg-s'){ CG.s = Number(e.target.value); CG.page = 0; CG.mv = 24; CG.asm = 24; CG.ldm = 24; CG.gom = 50; saveCG(); render(); }
 });
 let QT = null;
 document.addEventListener('input', e => {
   if(e.target.dataset?.in === 'tr-gq'){ TRF.gq = e.target.value; clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.dataset?.in === 'tr-q'){ TRF.q = e.target.value; TRF.page = 0; saveTRF(); clearTimeout(QT); QT = setTimeout(render, 250); }
-  if(e.target.dataset?.in === 'cg-q'){ CG.q = e.target.value; CG.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
+  if(e.target.dataset?.in === 'cg-q'){ CG.q = e.target.value; cgResetMore(); clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.id === 'gcmText') GCD[e.target.dataset.gk] = e.target.value;
   if(e.target.dataset?.in === 'rk-q'){ RK.q = e.target.value; RK.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   const mk = e.target.dataset?.memo;
@@ -2254,7 +2537,9 @@ $('#fileBackup').addEventListener('change', async e => {
     const j = JSON.parse(await f.text());
     if(!j || j.v !== 1 || !Array.isArray(j.tracked)) throw new Error('백업 파일 형식이 아닙니다');
     if(!confirm(`백업을 불러오면 지금 기록(추적 ${ST.tracked.length}명)을 바꿉니다. 계속할까요?`)) return;
-    ST = Object.assign(freshStore(), j); migrateFav(); loadSession(); saveStore(); await render(); toast(`백업을 불러왔습니다 (추적 ${ST.tracked.length}명)`);
+    const cl = cleanStore(j);
+    ST = cl.st; migrateFav(); loadSession(); saveStore(); await render();
+    toast(`백업을 불러왔습니다 (추적 ${ST.tracked.length}명)` + (cl.drop ? ` · 형식이 맞지 않는 항목 ${cl.drop}개는 버렸습니다` : ''));
   }catch(err){ toast('불러오기 실패: ' + err.message); }
 });
 // 대화상자 버튼
@@ -2316,7 +2601,7 @@ async function importLegacy(){
     let n = 0;
     for(const c of r.chars || []){
       const k = key(c.world_code, c.name);
-      if(!ST.tracked.some(t => key(t.w, t.n) === k)){ ST.tracked.push({w: c.world_code, n: c.name, added: c.created || todayKST(), ev: []}); n++; }
+      if(ST.tracked.length < LIM.tracked && !ST.tracked.some(t => key(t.w, t.n) === k)){ ST.tracked.push({w: c.world_code, n: c.name, added: c.created || todayKST(), ev: []}); n++; }
       for(const [code, m] of Object.entries(c.masteries || {})) if(m.source !== '사이트') (ST.mastery[k] ||= {})[code] = {l: m.level, d: m.date};
       if(c.integ?.length) ST.integ[k] = c.integ.map(x => ({d: x.date, l: x.level, p: x.pct}));
     }
@@ -2324,20 +2609,25 @@ async function importLegacy(){
     if(n) toast(`이전 버전 기록을 가져왔습니다 (캐릭터 ${n}명)`);
   }catch(e){}
 }
+// 뒤로 가기 캐시(bfcache)로 돌아왔을 때 입장 키가 지워졌으면 다시 입장 화면으로
+window.addEventListener('pageshow', e => { if(e.persisted && SEAL.on && !sealStored()) location.replace('index.html'); });
 (async function start(){
   try{ const r = await fetch('api/hello', {cache:'no-store'}); if(r.ok){ const j = await r.json(); if(j.app === 'l9tracker') D.local = {version: j.version}; } }catch(e){}
   if(D.local){
     // 프로그램 폴더에 저장된 기록·설정 불러오기 (없으면 지금 브라우저 기록을 올림)
     try{
       const j = await localApi('api/store');
-      if(j.store && j.store.v === 1){ ST = Object.assign(freshStore(), j.store); }
+      if(j.store && j.store.v === 1){ ST = cleanLoaded(j.store); migrateFav(); }
       else if(ST.tracked.length || (ST.expr || []).length) syncPush({store: persisted()});
       if(migrateFav()) saveStore();
-      for(const [k, v] of Object.entries(j.prefs || {})){ try{ localStorage.setItem(k, v); }catch(e){} }
+      for(const [k, v] of Object.entries(j.prefs || {})){ if(typeof v !== 'string' || v.length > 2000 || !PREF_KEYS.includes(k)) continue; try{ localStorage.setItem(k, v); }catch(e){} }
       SYNC.on = true;
       if(!j.prefs) syncPush({prefs: prefsNow()});
     }catch(e){}
   }
+  if(!D.local && !(await sealInit())) return;   // 웹: 입장 비밀번호 확인 전이면 입장 화면으로
+  if(SEAL.on){ const b = $('#btnLock'); if(b) b.hidden = false; }
+  if(LOAD_NOTE){ toast(LOAD_NOTE); LOAD_NOTE = ''; }
   loadSession(); saveStore();   // 예전에 저장된 '검색한 캐릭터' 기록은 지움
   setPhos(lsGet('l9phos', 'blue'));
   bgmInit();
