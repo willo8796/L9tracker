@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -223,7 +223,7 @@ function spBands(sps){
 /* ============================================================ 통합 레벨 추정 */
 // 게임의 공식이 공개되지 않아, 실제 게임 화면 값(마스터리 11종 합계 → 통합 레벨)으로 맞춘 추정치.
 // 기본 2개 기준점 + 사용자가 [마스터리 입력]에서 통합 레벨을 직접 넣을 때마다 기준점이 늘어 정확해짐.
-const INTEG_AUTO = false;   // 계산식 확인 전까지 자동 계산 보류
+const INTEG_AUTO = true;    // v1.2.0: 계산식 확인 (통합레벨 계산기와 같은 방식)
 const INTEG_BASE = [{sum: 653, v: 113.1405}, {sum: 631, v: 104.4605}];
 function integFit(){
   const pts = INTEG_BASE.concat((ST.calib || []).filter(p => p.sum > 11 && p.v > 0));
@@ -321,7 +321,7 @@ async function buildCards(list){
       .sort((a, b) => a.d < b.d ? 1 : -1);
     const last = series[series.length - 1], prev = series.length > 1 ? series[series.length - 2] : null;
     const allM = INTEG_AUTO && masteryList().slice(0, 11).every(([code]) => ms[code]?.level);
-    const est = allM ? integEstimate(masteryList().slice(0, 11).reduce((a, [code]) => a + ms[code].level, 0)) : null;
+    const est = allM ? (() => { const e = lvRange(masteryList().slice(0, 11).map(([code]) => ms[code].level), 3000); return e && {l: e.top[0], p: null, lo: e.min, hi: e.max, pr: e.top[1]}; })() : null;
     const mLast = allM ? masteryList().slice(0, 11).map(([code]) => ms[code].date).sort().pop() : null;
     out.push({t, k, r, h, series, last, prev, ms, integ: integs[integs.length - 1] || null, integs, ev, est, mLast});
   }
@@ -377,7 +377,7 @@ function subject(c, idx, mode){
     <div class="viz body"><img src="body.gif" alt=""><i class="brk a"></i><i class="brk b"></i><i class="brk c"></i><i class="brk e"></i><div class="job">${esc(job)}</div></div>
     <div class="big"><div class="lb">전투력</div><div class="v">${nf(bp)}${delta(L?.bp, P?.bp)}</div></div>
     <div class="big amb"><div class="lb">통합 레벨${useEst ? ' <span class="est">자동 계산 · 추정</span>' : ''}</div><div class="v">${shown ? shown.l : '--'}${pct != null ? `<small>${pct.toFixed(2)}%</small>` : ''}</div>
-      <div class="blocks">${blocks}</div><div class="s">${useEst ? `마스터리 11종 합계 ${c.est.sum} 기준 추정 (기준점 ${c.est.n}개)` : it ? esc(it.d) + ' 게임 화면 입력' : '마스터리 입력에서 기록하세요'}</div></div>
+      <div class="blocks">${blocks}</div><div class="s">${useEst ? `마스터리 11종 레벨로 계산 · 경험치 % 모름 → ${c.est.lo === c.est.hi ? c.est.lo : c.est.lo + '~' + c.est.hi} 중 ${c.est.l} 가능성 ${Math.round(c.est.pr * 100)}%` : it ? esc(it.d) + ' 게임 화면 입력' : '마스터리 입력에서 기록하세요'}</div></div>
   </div>`;
   const lastOf = k => c.ev.find(x => x.kind === k);
   const pn = lastOf('닉네임 변경'), pg = lastOf('길드 변경');
@@ -542,6 +542,32 @@ window.addEventListener('resize', () => alignTrBar());
 const TRF = Object.assign({q: '', g: '', w: 0, sort: 'add'}, JSON.parse(lsGet('l9trf', '{}') || '{}'));   // 추적 목록 찾기 · 필터
 function saveTRF(){ lsSet('l9trf', JSON.stringify(TRF)); }
 const TRVIEW = {keys: []};   // 지금 화면에 보이는 (필터 적용된) 추적 캐릭터
+let TRTAB = lsGet('l9trtab', 'list');
+if(!['list', 'guild', 'ov', 'detail'].includes(TRTAB)) TRTAB = 'list';
+function setTrTab(v){ TRTAB = v; lsSet('l9trtab', v); }
+// 길드별: 추적 캐릭터를 길드로 묶어 보기
+function trGuildTab(gl){
+  const q = (TRF.gq || '').trim();
+  const groups = new Map();
+  for(const c of CARDS){ const g = trGuild(c) || '-'; if(!groups.has(g)) groups.set(g, []); groups.get(g).push(c); }
+  let rows = [...groups].map(([g, l]) => {
+    const bps = l.map(c => (c.r ? c.r[C.bp] : c.last?.bp) || 0), mls = l.map(c => (c.r ? c.r[C.ml] : c.last?.ml) || 0).filter(Boolean);
+    const ws = [...new Set(l.map(c => wName(c.t.w) + (c.r ? ' ' + serverLabel(c.r[C.s]) : '')))];
+    return {g, l: l.slice().sort((a, b) => ((b.r ? b.r[C.bp] : b.last?.bp) || 0) - ((a.r ? a.r[C.bp] : a.last?.bp) || 0)), n: l.length,
+      avg: bps.length ? Math.round(bps.reduce((a, b) => a + b, 0) / bps.length) : 0, max: Math.max(0, ...bps), ml: mls.length ? Math.round(mls.reduce((a, b) => a + b, 0) / mls.length) : 0, ws};
+  });
+  if(q) rows = rows.filter(x => (x.g === '-' ? '길드 없음' : x.g).includes(q) || x.l.some(c => c.t.n.includes(q)));
+  const by = {n: (a, b) => b.n - a.n || b.avg - a.avg, avg: (a, b) => b.avg - a.avg, max: (a, b) => b.max - a.max, name: (a, b) => (a.g === '-' ? '힣' : a.g).localeCompare(b.g === '-' ? '힣' : b.g, 'ko')}[TRF.gsort || 'n'];
+  rows.sort(by);
+  return `<section class="ov fr">${NODES}<div class="bar"><span class="sid g">길드별 추적 캐릭터</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${rows.length}개 길드 · 길드를 누르면 그 길드원만 목록에서 보기</span></div>
+    <div class="ctrls"><input class="q" data-in="tr-gq" value="${esc(TRF.gq || '')}" placeholder="길드명 · 캐릭터명 찾기">
+      <span class="lbl">정렬</span>${seg('tr-gsort', TRF.gsort || 'n', [['n', '인원'], ['avg', '평균 전투력'], ['max', '최고 전투력'], ['name', '길드명']])}</div>
+    ${rows.length ? `<div class="trgl">${rows.map(x => `<div class="trg">
+      <div class="trgh" data-act="tr-gopen" data-g="${esc(x.g)}"><div><b>${x.g === '-' ? '길드 없음' : esc(x.g)}</b><div class="sub">${esc(x.ws.slice(0, 2).join(', '))}${x.ws.length > 2 ? ` 외 ${x.ws.length - 2}` : ''}</div></div>
+        <div class="trgs"><span><small>인원</small><b>${x.n}</b></span><span><small>평균 전투력</small><b>${nf(x.avg)}</b></span><span><small>최고</small><b>${nf(x.max)}</b></span><span class="hide-s"><small>평균 마스터리</small><b>${nf(x.ml)}</b></span></div></div>
+      <div class="trgm">${x.l.slice(0, 12).map(c => `<button class="chip" data-act="trsel" data-k="${esc(c.k)}"><b>${esc(c.t.n)}</b> <small>${nf((c.r ? c.r[C.bp] : c.last?.bp) || 0)}</small></button>`).join('')}${x.l.length > 12 ? `<button class="chip" data-act="tr-gopen" data-g="${esc(x.g)}">+ ${x.l.length - 12}명 더 (목록에서 보기)</button>` : ''}</div></div>`).join('')}</div>`
+      : '<div class="empty" style="padding:14px 16px">찾는 길드가 없습니다</div>'}</section>`;
+}
 function trGuild(c){ return c.r ? (c.r[C.g] || '') : (c.h?.g || ''); }
 function trFilter(cards){
   const q = TRF.q.trim().toLowerCase();
@@ -570,7 +596,14 @@ async function pageTrack(){
   if(TRF.g && !gm.has(TRF.g)) TRF.g = '';
   const wl = [...new Set(CARDS.map(c => c.t.w))];
   const filtered = view.length !== CARDS.length;
-  const list = `<section class="ov fr">${NODES}<div class="bar"><span class="sid g">추적 캐릭터 관리</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${filtered ? `${view.length} / ${CARDS.length}명` : `${CARDS.length}명`} · 줄을 누르면 아래에 상세 표시</span></div>
+  // 소메뉴: 목록 · 길드별 · 종합 현황 · 상세 (한 화면에 다 펼치지 않음)
+  const TP = 20, pages = Math.max(1, Math.ceil(view.length / TP));
+  TRF.page = Math.min(Math.max(0, TRF.page || 0), pages - 1);
+  const pv = view.slice(TRF.page * TP, TRF.page * TP + TP);
+  const selC = CARDS[sel];
+  const tabs = `<div class="trtabs fr">${[['list', '캐릭터 목록', CARDS.length + '명'], ['guild', '길드별', (gl.length) + '개'], ['ov', '종합 현황', ''], ['detail', '상세', selC ? selC.t.n : '']].map(([v, l, n]) =>
+    `<button class="${TRTAB === v ? 'on' : ''}" data-act="tr-tab" data-v="${v}">${l}${n ? `<small>${esc(n)}</small>` : ''}</button>`).join('')}</div>`;
+  const list = `<section class="ov fr">${NODES}<div class="bar"><span class="sid g">추적 캐릭터 관리</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">${filtered ? `${view.length} / ${CARDS.length}명` : `${CARDS.length}명`} · 줄을 누르면 상세 화면으로</span></div>
     <div class="ctrls trf"><input class="q" data-in="tr-q" value="${esc(TRF.q)}" placeholder="캐릭터명 · 길드명 · 메모 찾기">
       <span class="lbl">길드</span><select data-ch="tr-g"><option value="">전체 (${CARDS.length})</option>${gl.map(([g, n]) => `<option value="${esc(g)}" ${g === TRF.g ? 'selected' : ''}>${g === '-' ? '길드 없음' : esc(g)} (${n})</option>`).join('')}</select>
       ${wl.length > 1 ? `<span class="lbl">월드</span><select data-ch="tr-w"><option value="0">전체</option>${wl.map(w => `<option value="${w}" ${w === TRF.w ? 'selected' : ''}>${esc(wName(w))}</option>`).join('')}</select>` : ''}
@@ -583,8 +616,8 @@ async function pageTrack(){
       <button class="btn" data-act="tr-delall">모두 해제 (${CARDS.length}명)</button></div>
     <div class="tbl" style="margin:0;border:0"><table class="rk trk"><tr><th class="chk"><button class="cb ${allOn ? 'on' : ''}" data-act="tr-chkall" title="${filtered ? '보이는 캐릭터 모두 선택' : '모두 선택'}">${allOn ? '✓' : ''}</button></th><th>#</th><th class="l">캐릭터</th><th class="hide-s l">길드</th><th>대표 마스터리</th><th>전투력</th><th>전문화</th><th class="hide-s">직업</th><th class="l">최근 변경</th><th></th></tr>
     ${view.length ? '' : `<tr><td colspan="10" class="emptyrow">찾는 캐릭터가 없습니다 — 검색어나 길드 필터를 바꿔 보세요</td></tr>`}
-    ${view.map((c, i) => { const r = c.r, lc = lastCh(c);
-      return `<tr class="rkrow ${c === CARDS[sel] ? 'mine' : ''} ${TRCHK.has(c.k) ? 'chk' : ''}" data-act="trsel" data-k="${esc(c.k)}"><td class="chk"><button class="cb ${TRCHK.has(c.k) ? 'on' : ''}" data-act="tr-chk" data-k="${esc(c.k)}" title="선택">${TRCHK.has(c.k) ? '✓' : ''}</button></td><td class="no">${i + 1}</td>
+    ${pv.map((c, i) => { const r = c.r, lc = lastCh(c);
+      return `<tr class="rkrow ${c === CARDS[sel] ? 'mine' : ''} ${TRCHK.has(c.k) ? 'chk' : ''}" data-act="trsel" data-k="${esc(c.k)}"><td class="chk"><button class="cb ${TRCHK.has(c.k) ? 'on' : ''}" data-act="tr-chk" data-k="${esc(c.k)}" title="선택">${TRCHK.has(c.k) ? '✓' : ''}</button></td><td class="no">${TRF.page * TP + i + 1}</td>
         <td class="l"><div class="nm">${esc(c.t.n)}</div><div class="sub">${esc(wName(c.t.w))} ${r ? serverLabel(r[C.s]) : ''}</div>${ldTo.has(c.k) ? `<div class="trld">${ldBadge(ldTo.get(c.k).level, '이전 · 세탁 의심 ')}</div>` : ''}${c.t.memo ? `<div class="trmemo" title="${esc(c.t.memo)}">메모 · ${esc(c.t.memo.split('\n')[0])}</div>` : ''}</td>
         <td class="hide-s l">${esc(r ? (r[C.g] || '-') : '--')}</td>
         <td>${r ? `<span class="big" style="font-size:19px">${nf(r[C.ml])}</span><div class="sub">${esc(mname(mcode(r[C.mc])))}</div>` : '--'}</td>
@@ -593,9 +626,25 @@ async function pageTrack(){
         <td class="hide-s">${r ? esc(jobName(r[C.j])) : '--'}</td>
         <td class="l">${lc ? `<span class="kt k-${esc(lc.kind.split(' ')[0])}">${esc(lc.kind)}</span> <span class="sub" style="display:inline">${esc(lc.d.slice(5))}</span>` : '<span class="sub">없음</span>'}</td>
         <td><button class="mini-btn" data-act="del" data-k="${esc(c.k)}">해제</button></td></tr>`; }).join('')}
-    </table></div></section>`;
-  setTimeout(fillMissCands, 0); setTimeout(alignTrBar, 0);
-  return list + overview() + subject(CARDS[sel], sel, 'track') + BACKUP_NOTE;
+    </table></div>
+    ${pages > 1 ? `<div class="pager"><button class="btn" data-act="tr-page" data-p="0" ${TRF.page ? '' : 'disabled'}>처음</button><button class="btn" data-act="tr-page" data-p="${TRF.page - 1}" ${TRF.page ? '' : 'disabled'}>이전</button>
+      <span class="pi">${TRF.page + 1} / ${pages} 쪽 · ${TRF.page * TP + 1}~${Math.min(view.length, TRF.page * TP + TP)}번째</span>
+      <button class="btn" data-act="tr-page" data-p="${TRF.page + 1}" ${TRF.page < pages - 1 ? '' : 'disabled'}>다음</button><button class="btn" data-act="tr-page" data-p="${pages - 1}" ${TRF.page < pages - 1 ? '' : 'disabled'}>끝</button></div>` : ''}
+    </section>`;
+  let body = '';
+  if(TRTAB === 'guild') body = trGuildTab(gl);
+  else if(TRTAB === 'ov') body = overview();
+  else if(TRTAB === 'detail'){
+    const dl = view.length ? view : CARDS, di = Math.max(0, dl.indexOf(selC));
+    const nav = `<div class="trdnav fr"><button class="btn" data-act="tr-step" data-k="${esc(dl[(di - 1 + dl.length) % dl.length].k)}" ${dl.length > 1 ? '' : 'disabled'}>◀ 이전</button>
+      <select data-ch="tr-pick">${dl.map(c => `<option value="${esc(c.k)}" ${c === selC ? 'selected' : ''}>${esc(c.t.n)} · ${esc(wName(c.t.w))}${trGuild(c) ? ' · ' + esc(trGuild(c)) : ''}</option>`).join('')}</select>
+      <button class="btn" data-act="tr-step" data-k="${esc(dl[(di + 1) % dl.length].k)}" ${dl.length > 1 ? '' : 'disabled'}>다음 ▶</button>
+      <span class="sub">${di + 1} / ${dl.length}${dl === view && filtered ? ' (필터 적용)' : ''}</span></div>`;
+    body = nav + subject(selC, sel, 'track');
+  }
+  else body = list;
+  setTimeout(fillMissCands, 0); if(TRTAB === 'list') setTimeout(alignTrBar, 0);
+  return tabs + body + BACKUP_NOTE;
 }
 async function fillMissCands(){
   const els = document.querySelectorAll('[data-miss]'); if(!els.length || !readyWorlds().length) return;
@@ -759,7 +808,7 @@ async function charDialog(w, n){
     ${tm ? `<div class="f" style="margin:14px 0 0"><label>추적 메모</label><textarea class="memo" data-memo="${esc(key(w, n))}" rows="3" placeholder="메모 입력 (자동 저장)">${esc(tm.memo || '')}</textarea></div>` : ''}`;
   showDlg(`<b class="cname">${esc(n)}</b> <small>${esc(got.date || '')} 기준</small>`, html, [
     {id:'main', label:'캐릭터에서 보기', run:() => { $('#dlgAdd').open && $('#dlgAdd').close(); setCur(w, n); if(route() !== 'my') location.hash = '#my'; else render(); }},
-    tracked ? {id:'go', label:'추적에서 보기', pri:true, run:() => { TRSEL = key(w, n); lsSet('l9trsel', TRSEL); location.hash = '#track'; }}
+    tracked ? {id:'go', label:'추적에서 보기', pri:true, run:() => { TRSEL = key(w, n); lsSet('l9trsel', TRSEL); setTrTab('detail'); location.hash = '#track'; }}
             : {id:'add', label:'+ 추적 추가', pri:true, run:() => { $('#dlgAdd').open && $('#dlgAdd').close(); track(w, n); }}], true);
 }
 function track(w, n){
@@ -1138,6 +1187,195 @@ async function pageChg(){
   return h;
 }
 
+/* ============================================================ 통합레벨 계산기 */
+// 게임 클라이언트 데이터(Mastery_Level · Mastery_PvPLevelAdjust)에서 가져온 값.
+// 통합 레벨 = 무기 11종 누적 경험치를 모두 더해 무기와 같은 경험치 곡선에 넣은 레벨 (최대 130).
+// 검증: 게임 표시 114 · 17.04% ↔ 계산 114 · 17.03%
+const LV_PVP = [[-20,-2500,-2000,-2000,-5000],[-19,-2400,-1900,-1900,-4500],[-18,-2300,-1800,-1800,-4000],[-17,-2200,-1700,-1700,-3900],[-16,-2100,-1600,-1600,-3800],[-15,-2000,-1500,-1500,-3700],[-14,-1900,-1400,-1400,-3600],[-13,-1800,-1300,-1300,-3500],[-12,-1700,-1200,-1200,-3400],[-11,-1600,-1100,-1100,-3300],[-10,-1500,-1000,-1000,-3200],[-9,-1400,-900,-900,-3000],[-8,-1300,-800,-800,-2800],[-7,-1200,-700,-700,-2400],[-6,-1100,-600,-600,-2000],[-5,-1000,-500,-500,-1500],[-4,-900,-400,-400,-1000],[-3,-800,-300,-300,-500],[-2,-700,0,0,-200],[-1,-500,0,0,0],[0,0,0,0,0],[1,50,0,0,0],[2,100,0,0,100],[3,150,0,0,150],[4,200,0,0,200],[5,250,0,0,250],[6,300,0,0,300],[7,350,0,0,350],[8,400,0,0,400],[9,450,0,0,450],[10,500,0,0,500],[11,550,0,0,550],[12,600,0,0,600],[13,650,0,0,650],[14,700,0,0,700],[15,750,0,0,750],[16,800,0,0,800],[17,850,0,0,850],[18,900,0,0,900],[19,950,0,0,950],[20,1000,0,0,1000]]; // [레벨 차이, 명중, 치명타, 피해량, 상태이상] 단위 1/100 %
+const LV_EXP = ["22","80","120","168","280","420","637","788","893","1120","1415","1590","1874","2214","2693","3260","4164","5058","6256","7360","11981","13200","15034","17261","20276","26924","33370","40392","49018","59520","122204","158400","212475","291411","372082","630694","870265","1145205","1492885","1670760","4216212","5096520","6089078","7405609","7904150","9684589","12446269","15568936","19324899","20714400","43867980","51700275","60463260","72105877","79091130","95376453","120654425","148764712","182556860","216928530","386305266","448457764","512851909","597640499","695999804","820769378","1004859286","1204381483","1443601142","1724956884","2420234593","2737919653","3086787623","3525526445","4006718521","4597613348","5451362025","6243781376","7186180252","8296726219","13120101166","15195392772","17487569176","20273580227","23280103643","26888882452","31991576376","36673262153","42153898306","48519114818","56909531662","64076307902","86049044105","120468661747","192749858795","308399774072","524279615923","891275347069","1515168090017","2419200000000","2851200000000","3317760000000","3818880000000","4354560000000","4924800000000","5529600000000","6168960000000","6842880000000","7551360000000","8294400000000","9072000000000","9884160000000","10730880000000","11612160000000","12528000000000","13478400000000","14463360000000","15482880000000","16536960000000","194758275825026","356961292206976","713201643936026","1151331339798630","1751212248444150","2472372673173620","3572232191216350","4900102914588620","6463353436631740","8268480000000000","21597569177581500","41648619007943400","72983285703294800","108408897023830000","146876506977166000","187768299918505000","230676043964005000","276811252756806000","332173503308167000","398608203969801000","398608203969801000"]; // 레벨별 다음 레벨까지 필요 경험치 (1~140)
+const LV_MAX = 130;
+const LV_E = LV_EXP.map(s => BigInt(s));
+const LV_CUM = [0n]; LV_E.forEach((e, i) => LV_CUM.push(LV_CUM[i] + e));
+const LV_EN = LV_E.map(Number), LV_CN = LV_CUM.map(Number);
+const lvAdj = d => { const r = LV_PVP[Math.max(-20, Math.min(20, d)) + 20]; return {d: r[0], hit: r[1], crit: r[2], dmg: r[3], mez: r[4]}; };
+const lvOfN = t => { let L = 1; while(L < LV_MAX && LV_CN[L] <= t) L++; return L; };
+function lvWeaponCum(lv, p){ lv = Math.max(1, Math.min(140, Math.floor(lv))); p = Math.max(0, Math.min(100, p || 0));
+  return LV_CUM[lv - 1] + (LV_E[lv - 1] * BigInt(Math.round(p * 1e6))) / 100000000n; }
+// 레벨 + 경험치 % → 통합 레벨 · %
+function lvExact(list){
+  let tot = 0n, any = false;
+  for(const [lv, p] of list) if(lv >= 1){ any = true; tot += lvWeaponCum(lv, p); }
+  if(!any) return null;
+  let L = 1; while(L < LV_MAX && LV_CUM[L] <= tot) L++;
+  const pr = L >= LV_MAX ? 100 : Number((tot - LV_CUM[L - 1]) * 10000n / LV_E[L - 1]) / 100;
+  return {l: L, p: pr};
+}
+// 레벨만 알 때(경험치 % 모름): 각 무기 경험치 0~100%를 고르게 가정해 나올 수 있는 통합 레벨 분포
+function lvRange(levels, N = 20000){
+  levels = levels.filter(l => l >= 1 && l <= 140);
+  if(!levels.length) return null;
+  let mn = 0, mx = 0; for(const l of levels){ mn += LV_CN[l - 1]; mx += LV_CN[l]; }
+  const h = {};
+  for(let k = 0; k < N; k++){ let t = 0; for(const l of levels) t += LV_CN[l - 1] + LV_EN[l - 1] * Math.random(); const L = lvOfN(t); h[L] = (h[L] || 0) + 1; }
+  const dist = Object.entries(h).map(([L, c]) => [+L, c / N]).sort((a, b) => a[0] - b[0]);
+  const top = dist.reduce((a, b) => b[1] > a[1] ? b : a);
+  return {min: lvOfN(mn), max: lvOfN(mx - 1), dist, top, n: levels.length};
+}
+const lvPct = v => v === 0 ? '0%' : (v < 0 ? '−' : '+') + Number((Math.abs(v) / 100).toFixed(2)) + '%';
+const lvSgn = d => d > 0 ? '+' + d : d < 0 ? '−' + (-d) : '0';
+const lvCls = v => v < 0 ? 'neg' : v > 0 ? 'pos' : 'zero';
+function lvState(){ return (ST.lvc ||= {my: '', op: '', w: {}, opw: ''}); }
+// 추적 캐릭터의 마스터리 (사이트 + 직접 입력) → 무기별 레벨
+async function lvLevelsOf(k){
+  const c = (await buildCards()).find(x => x.k === k);
+  if(!c) return null;
+  return masteryList().slice(0, 11).map(([code]) => c.ms[code]?.level || 0);
+}
+function pageLvl(){
+  const S = lvState();
+  const opts = ST.tracked.map(t => `<option value="${esc(key(t.w, t.n))}">${esc(t.n)} · ${esc(wName(t.w))}</option>`).join('');
+  const pick = id => ST.tracked.length ? `<select id="${id}" class="lvpick"><option value="">추적 캐릭터에서 불러오기</option>${opts}</select>` : '';
+  const ws = masteryList().slice(0, 11);
+  return `<div class="lvwrap">
+  <section class="ov fr">${NODES}
+    <div class="bar"><span class="sid g">통합레벨 계산기</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">PvP 통합 레벨 차이 보정</span></div>
+    <div class="note">통합 레벨 차이에 따라 <b>피해량 · 치명타 · 명중 · 상태이상 성공률</b>이 보정됩니다. 피해량은 <b>3레벨 낮을 때부터 −3%</b>, 1레벨마다 −1%씩 커져 20레벨 이상 낮으면 <b>−20%</b>입니다. 레벨이 높은 쪽은 피해량 보너스가 없고 명중 · 상태이상만 조금 오릅니다.</div>
+    <div class="lvcalc">
+      <div class="lvin"><label for="lv-my">내 통합 레벨</label><input id="lv-my" type="number" inputmode="numeric" min="1" max="130" placeholder="1~130" value="${esc(S.my)}"></div>
+      <div class="lvdiff"><span>레벨 차이</span><b id="lv-diff">-</b></div>
+      <div class="lvin"><label for="lv-op">상대 통합 레벨</label><input id="lv-op" type="number" inputmode="numeric" min="1" max="130" placeholder="1~130" value="${esc(S.op)}"></div>
+    </div>
+    <div class="lvstatus" id="lv-status">레벨을 입력하세요</div>
+    <div class="lvres"><div class="lvcol"><div class="lvh">내가 공격할 때</div><div id="lv-r1"></div></div><div class="lvcol"><div class="lvh">상대가 공격할 때</div><div id="lv-r2"></div></div></div>
+  </section>
+  <div class="lvhelpers">
+    <section class="ov fr">${NODES}
+      <div class="bar"><span class="sid g">내 통합 레벨 계산</span></div>
+      <div class="lvbody">
+        <p class="hint2">게임 마스터리 창의 무기별 <b>레벨</b>과 <b>경험치 %</b>를 넣으세요. 안 쓴 무기는 비워 두면 됩니다.</p>
+        ${pick('lv-pick1')}
+        <div class="lvwh"><span>무기</span><span>레벨</span><span>경험치 %</span></div>
+        ${ws.map(([code, name], i) => `<div class="lvwr"><span>${esc(name)}</span><input type="number" inputmode="numeric" min="1" max="140" data-lvw="${i}" data-f="l" placeholder="Lv" value="${esc(S.w[i + 'l'] ?? '')}"><input type="number" inputmode="decimal" min="0" max="100" step="0.01" data-lvw="${i}" data-f="p" placeholder="%" value="${esc(S.w[i + 'p'] ?? '')}"></div>`).join('')}
+        <div class="lvout"><div><div class="sub">통합 레벨</div><div class="lvv" id="lv-mine">-</div></div>
+          <div class="lvbtns"><button class="btn" data-act="lv-wclear">비우기</button><button class="btn pri" data-act="lv-apply1" id="lv-apply1" disabled>내 레벨에 적용</button></div></div>
+      </div>
+    </section>
+    <section class="ov fr">${NODES}
+      <div class="bar"><span class="sid g">상대 통합 레벨 추정</span></div>
+      <div class="lvbody">
+        <p class="hint2">상대는 경험치 %를 모르니 <b>무기 레벨만</b> 넣으세요 (공백이나 쉼표로 구분, 11개까지). 각 무기의 경험치를 0~100% 고르게 가정해 나올 수 있는 통합 레벨과 확률을 계산합니다.</p>
+        ${pick('lv-pick2')}
+        <input id="lv-opw" class="lvtxt" type="text" autocomplete="off" placeholder="예: 110 107 100 95 89 54 50 47 1 1 1" value="${esc(S.opw)}">
+        <div id="lv-est"></div>
+        <div class="lvout"><div><div class="sub">가장 가능성 높은 레벨</div><div class="lvv" id="lv-estv">-</div></div>
+          <div class="lvbtns"><button class="btn pri" data-act="lv-apply2" id="lv-apply2" disabled>상대 레벨에 적용</button></div></div>
+      </div>
+    </section>
+  </div>
+  <section class="ov fr">${NODES}
+    <div class="bar"><span class="sid g">레벨 차이별 보정</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">가로: 내 통합 레벨 − 상대 통합 레벨 (공격하는 쪽 기준)</span></div>
+    <div class="lvlegend"><span><i class="c-dmg"></i>피해량 · 치명타</span><span><i class="c-hit"></i>명중</span><span><i class="c-mez"></i>상태이상</span></div>
+    <div id="lv-chart"><svg id="lv-svg" role="img" aria-label="레벨 차이별 보정 그래프"></svg><div id="lv-tip"></div></div>
+    <details class="lvdet"><summary>전체 보정표 (−20 ~ +20)</summary><div class="tbl" style="margin:0;border:0;max-height:420px;overflow:auto"><table class="rk lvtbl"><tr><th>레벨 차이</th><th>피해량</th><th>치명타</th><th>명중</th><th>상태이상</th></tr>
+      ${LV_PVP.map(r => `<tr data-lvd="${r[0]}"><td class="dg">${lvSgn(r[0])}</td>${[r[3], r[2], r[1], r[4]].map(v => `<td class="${lvCls(v)}">${lvPct(v)}</td>`).join('')}</tr>`).join('')}</table></div></details>
+    <div class="note" style="border-top:1px solid var(--line2)">출처: 게임 클라이언트 데이터 (Mastery_Level · Mastery_PvPLevelAdjust). 통합 레벨은 무기 11종의 누적 경험치를 합쳐 무기와 같은 경험치 곡선으로 계산합니다 (최대 130). 게임 표시 114 · 17.04% ↔ 계산 114 · 17.03%로 확인했습니다. 실제 판정은 서버에서 하므로 다를 수 있습니다.</div>
+  </section></div>`;
+}
+let LVCUR = null;
+function lvRows(a){
+  return [['피해량', a.dmg], ['치명타', a.crit], ['명중', a.hit], ['상태이상 성공률', a.mez]]
+    .map(([n, v]) => `<div class="lvrow"><span>${n}</span><b class="${lvCls(v)}">${lvPct(v)}</b></div>`).join('');
+}
+function lvCalc(){
+  const S = lvState(), cl = v => { v = parseInt(v); return isNaN(v) ? NaN : Math.max(1, Math.min(LV_MAX, v)); };
+  S.my = $('#lv-my').value; S.op = $('#lv-op').value; saveStore();
+  const my = cl(S.my), op = cl(S.op);
+  if(isNaN(my) || isNaN(op)){
+    $('#lv-diff').textContent = '-'; $('#lv-status').textContent = '레벨을 입력하세요'; $('#lv-status').className = 'lvstatus';
+    const z = lvRows({dmg: 0, crit: 0, hit: 0, mez: 0}).replace(/>0%</g, '>-<'); $('#lv-r1').innerHTML = z; $('#lv-r2').innerHTML = z;
+    LVCUR = null; lvChart(); lvMark(); return;
+  }
+  const d = my - op; LVCUR = d;
+  const a = lvAdj(d), b = lvAdj(-d);
+  let msg, c = '';
+  if(d === 0){ msg = '같은 레벨 · 보정 없음'; }
+  else if(a.dmg < 0){ msg = `내가 주는 피해 ${lvPct(a.dmg)}`; c = 'neg'; }
+  else if(b.dmg < 0){ msg = `상대가 주는 피해 ${lvPct(b.dmg)}`; c = 'pos'; }
+  else if(d < 0){ msg = `피해량 보정 없음 · 내 명중 ${lvPct(a.hit)}`; c = 'neg'; }
+  else { msg = `피해량 보정 없음 · 상대 명중 ${lvPct(b.hit)}`; c = 'pos'; }
+  $('#lv-diff').textContent = lvSgn(d); $('#lv-status').textContent = msg; $('#lv-status').className = 'lvstatus ' + c;
+  $('#lv-r1').innerHTML = lvRows(a); $('#lv-r2').innerHTML = lvRows(b);
+  lvChart(); lvMark();
+}
+let LVMINE = null, LVEST = null, LVT = 0;
+function lvMine(){
+  const S = lvState(); S.w ||= {};
+  const list = [];
+  document.querySelectorAll('[data-lvw]').forEach(inp => { S.w[inp.dataset.lvw + inp.dataset.f] = inp.value; });
+  for(let i = 0; i < 11; i++){ const lv = parseFloat(S.w[i + 'l']), p = parseFloat(S.w[i + 'p']); if(!isNaN(lv)) list.push([lv, isNaN(p) ? 0 : p]); }
+  saveStore();
+  const r = lvExact(list); LVMINE = r ? r.l : null;
+  $('#lv-mine').innerHTML = r ? (r.l >= LV_MAX ? `${r.l}<small>최대</small>` : `${r.l}<small>${r.p.toFixed(2)}%</small>`) : '-';
+  $('#lv-apply1').disabled = !r;
+}
+function lvEst(){
+  const S = lvState(); S.opw = $('#lv-opw').value; saveStore();
+  const ol = (S.opw.match(/\d+/g) || []).map(Number).filter(n => n >= 1 && n <= 140).slice(0, 11);
+  const o = $('#lv-est');
+  if(!ol.length){ LVEST = null; o.innerHTML = ''; $('#lv-estv').textContent = '-'; $('#lv-apply2').disabled = true; return; }
+  const e = lvRange(ol); LVEST = e;
+  const mp = e.top[1];
+  o.innerHTML = `<div class="lvrange">입력 ${e.n}개 · 나올 수 있는 범위 <b>${e.min === e.max ? e.min : e.min + ' ~ ' + e.max}</b></div><div class="lvbars">`
+    + e.dist.map(([L, p]) => `<div class="lvbar ${L === e.top[0] ? 'top' : ''}"><span>${L}</span><div class="tr"><i style="width:${(p / mp * 100).toFixed(1)}%"></i></div><em>${(p * 100).toFixed(1)}%</em></div>`).join('') + '</div>';
+  $('#lv-estv').innerHTML = `${e.top[0]}<small>${(e.top[1] * 100).toFixed(0)}%</small>`;
+  $('#lv-apply2').disabled = false;
+}
+function lvMark(){
+  const cd = LVCUR == null ? null : Math.max(-20, Math.min(20, LVCUR));
+  document.querySelectorAll('.lvtbl tr[data-lvd]').forEach(tr => tr.classList.toggle('mine', cd != null && +tr.dataset.lvd === cd));
+}
+function lvChart(){
+  const box = $('#lv-chart'), svg = $('#lv-svg'), tip = $('#lv-tip'); if(!box) return;
+  const cs = getComputedStyle(document.documentElement), col = n => cs.getPropertyValue(n).trim() || '#9ad';
+  const SER = [{k: 'dmg', n: '피해량 · 치명타', c: '#ff6b6b', w: 2.5}, {k: 'hit', n: '명중', c: col('--hi'), w: 2}, {k: 'mez', n: '상태이상', c: col('--amb'), w: 2}];
+  const W = Math.max(260, (box.clientWidth || 620) - 20), H = W < 500 ? 230 : 290, m = {l: W < 500 ? 42 : 50, r: 12, t: 12, b: 28};   // 20 = #lv-chart 좌우 여백
+  const NS = 'http://www.w3.org/2000/svg', el = (t, a, p) => { const e = document.createElementNS(NS, t); for(const k in a) e.setAttribute(k, a[k]); p && p.append(e); return e; };
+  svg.setAttribute('width', W); svg.setAttribute('height', H); svg.innerHTML = '';
+  const ymin = -5000, ymax = 1000, x = d => m.l + (d + 20) / 40 * (W - m.l - m.r), y = v => m.t + (ymax - v) / (ymax - ymin) * (H - m.t - m.b);
+  const dim = col('--dim'), line = col('--line2');
+  for(let v = -5000; v <= 1000; v += 1000){ el('line', {x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: v === 0 ? dim : line, 'stroke-opacity': v === 0 ? .8 : .5}, svg);
+    el('text', {x: m.l - 6, y: y(v) + 4, 'text-anchor': 'end', fill: dim, 'font-size': 11}, svg).textContent = (v < 0 ? '−' + (-v / 100) : v / 100) + '%'; }
+  for(let d = -20; d <= 20; d += 5) el('text', {x: x(d), y: H - 8, 'text-anchor': 'middle', fill: dim, 'font-size': 11}, svg).textContent = lvSgn(d);
+  if(LVCUR != null){ const cd = Math.max(-20, Math.min(20, LVCUR));
+    el('line', {x1: x(cd), x2: x(cd), y1: m.t, y2: H - m.b, stroke: col('--hi'), 'stroke-width': 1.5, 'stroke-dasharray': '3 3'}, svg);
+    SER.forEach(s => el('circle', {cx: x(cd), cy: y(lvAdj(cd)[s.k]), r: 4.5, fill: s.c}, svg)); }
+  SER.forEach(s => el('path', {d: LV_PVP.map((r, i) => (i ? 'L' : 'M') + x(r[0]).toFixed(1) + ',' + y(lvAdj(r[0])[s.k]).toFixed(1)).join(''), fill: 'none', stroke: s.c, 'stroke-width': s.w, 'stroke-linejoin': 'round'}, svg));
+  const vl = el('line', {y1: m.t, y2: H - m.b, stroke: dim, visibility: 'hidden'}, svg);
+  const dots = SER.map(s => el('circle', {r: 4, fill: s.c, visibility: 'hidden'}, svg));
+  const ov = el('rect', {x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent'}, svg);
+  const move = e => { const r = svg.getBoundingClientRect(), cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    const d = Math.max(-20, Math.min(20, Math.round((cx - m.l) / (W - m.l - m.r) * 40 - 20))), a = lvAdj(d);
+    vl.setAttribute('x1', x(d)); vl.setAttribute('x2', x(d)); vl.setAttribute('visibility', 'visible');
+    SER.forEach((s, i) => { dots[i].setAttribute('cx', x(d)); dots[i].setAttribute('cy', y(a[s.k])); dots[i].setAttribute('visibility', 'visible'); });
+    tip.innerHTML = `<b>레벨 차이 ${lvSgn(d)}</b>` + SER.map(s => `<div class="r"><span style="color:${s.c}">${s.n}</span><b class="${lvCls(a[s.k])}">${lvPct(a[s.k])}</b></div>`).join('');
+    tip.style.display = 'block'; const tw = tip.offsetWidth; let lx = x(d) + 12; if(lx + tw > W) lx = x(d) - tw - 12; tip.style.left = Math.max(0, lx) + 'px'; tip.style.top = (m.t + 4) + 'px'; };
+  const hide = () => { tip.style.display = 'none'; vl.setAttribute('visibility', 'hidden'); dots.forEach(d => d.setAttribute('visibility', 'hidden')); };
+  ov.addEventListener('mousemove', move); ov.addEventListener('mouseleave', hide);
+  ov.addEventListener('touchstart', move, {passive: true}); ov.addEventListener('touchmove', move, {passive: true}); ov.addEventListener('touchend', hide);
+}
+function initLvl(){
+  if(!$('#lv-my')) return;
+  $('#lv-my').addEventListener('input', lvCalc); $('#lv-op').addEventListener('input', lvCalc);
+  document.querySelectorAll('[data-lvw]').forEach(i => i.addEventListener('input', lvMine));
+  $('#lv-opw').addEventListener('input', () => { clearTimeout(LVT); LVT = setTimeout(lvEst, 150); });
+  const pk = async (id, fn) => { const s = $('#' + id); if(!s) return; s.addEventListener('change', async () => { if(!s.value) return; const l = await lvLevelsOf(s.value); s.value = ''; if(l) fn(l); }); };
+  pk('lv-pick1', l => { l.forEach((v, i) => { const a = document.querySelector(`[data-lvw="${i}"][data-f="l"]`); a.value = v || ''; }); lvMine(); toast('마스터리 레벨을 불러왔습니다 — 경험치 %를 넣으면 더 정확합니다'); });
+  pk('lv-pick2', l => { $('#lv-opw').value = l.filter(v => v > 0).join(' '); lvEst(); const miss = 11 - l.filter(v => v > 0).length; toast(miss ? `${11 - miss}개 무기 레벨을 불러왔습니다 (모르는 ${miss}개는 빠짐)` : '무기 11개 레벨을 불러왔습니다'); });
+  lvMine(); lvEst(); lvCalc();
+}
+let LVRT = 0; addEventListener('resize', () => { clearTimeout(LVRT); LVRT = setTimeout(() => { if($('#lv-chart')) lvChart(); }, 150); });
+
+
 /* ============================================================ 사용 설명서 */
 function pageHelp(){
   const ws = D.meta?.worlds || [];
@@ -1167,7 +1405,8 @@ function pageHelp(){
       <dt>통계</dt><dd>캐릭터 수 · 평균 · 최고, 전투력 · 마스터리 · 전문화 분포, 직업 · 무기 통계, 서버별 비교, 순위 컷.</dd>
       <dt>변경 이력</dt><dd>매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 아래에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다. 월드 · 서버 필터, 이전 닉네임으로도 찾기(지금 그 이름을 쓰는 다른 캐릭터와 구분 표시), 캐릭터를 산 뒤 관련 닉네임으로 바꾼 경우를 찾는 <b>닉네임 연관 추정(참고)</b>, 월드 · 서버를 옮기며 닉네임 · 길드 · 의상을 바꾼 <b>이전 세탁 의심</b>과 <b>행방 불명</b> 캐릭터 목록이 있습니다.</dd>
       <dt>경험치 계산기</dt><dd>사냥 결과 창 캡처를 끌어다 놓거나 Ctrl+V로 붙여넣으면 사냥터 · 사냥 시간 · M 경험치를 읽어 1분당 · 1시간당 경험치를 기록하고, 가장 효율 좋은 사냥터를 ★로 표시합니다. 사냥터 이름 앞뒤에 잘못 읽힌 글자는 자동으로 떼어냅니다. 잘못 읽은 기록은 [수정]으로 고칠 수 있습니다.</dd>
-      <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
+      <dt>통합레벨 계산기</dt><dd>내 · 상대 통합 레벨을 넣으면 PvP 레벨 차이 보정(피해량 · 치명타 · 명중 · 상태이상)을 보여줍니다. 무기 11종 레벨 · 경험치 %로 내 통합 레벨을 계산하고, 상대는 무기 레벨만으로 나올 수 있는 통합 레벨과 확률을 추정합니다. 추적 캐릭터의 마스터리를 불러올 수 있습니다.</dd>
+      <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 위쪽 소메뉴로 <b>캐릭터 목록</b>(20명씩 쪽 넘김) · <b>길드별</b>(길드로 묶어 인원 · 평균/최고 전투력, 누르면 그 길드원만 목록) · <b>종합 현황</b> · <b>상세</b>(이전/다음으로 넘겨 보기)를 나눠 봅니다. 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
     </dl>`)
   + sec('캐릭터 추적 방식 (닉네임 변경 · 월드 · 서버 이전)', `
     <p>공식 사이트에는 캐릭터 고유 번호가 없어서, 매일 수집 때 <b>어제 있다가 오늘 사라진 캐릭터</b>와 <b>오늘 처음 보이는 캐릭터</b>의 수치를 비교해 같은 캐릭터를 찾습니다.</p>
@@ -1519,7 +1758,7 @@ function noData(){
   if(D.local) return blank('랭킹 · 통계 데이터가 아직 없습니다', `[갱신하기]를 누르면 전체 캐릭터 수집을 시작합니다. 월드 하나가 끝날 때마다 (약 15~25분) 바로 표시됩니다${c?.msg ? '<br>' + esc(c.msg) : ''}`);
   return blank('아직 수집된 데이터가 없습니다', '첫 수집이 끝나면 표시됩니다. 매일 12시쯤 자동으로 수집합니다');
 }
-function route(){ const r = (location.hash || '#my').slice(1); return ['my', 'guild', 'rank', 'top', 'stats', 'chg', 'exp', 'track', 'help'].includes(r) ? r : r === 'fav' ? 'track' : 'my'; }
+function route(){ const r = (location.hash || '#my').slice(1); return ['my', 'guild', 'rank', 'top', 'stats', 'chg', 'exp', 'lvl', 'track', 'help'].includes(r) ? r : r === 'fav' ? 'track' : 'my'; }
 let RENDERING = null;
 async function render(){
   if(RENDERING){ RENDERING.again = true; return RENDERING.p; }
@@ -1534,11 +1773,12 @@ async function render(){
       renderStatus(); renderTicker();
       let html = '';
       try{
-        html = r === 'rank' ? await pageRank() : r === 'top' ? await pageTop() : r === 'stats' ? await pageStats() : r === 'exp' ? pageExp() : r === 'track' ? await pageTrack() : r === 'guild' ? await pageGuild() : r === 'chg' ? await pageChg() : r === 'help' ? pageHelp() : await pageMy();
+        html = r === 'rank' ? await pageRank() : r === 'top' ? await pageTop() : r === 'stats' ? await pageStats() : r === 'exp' ? pageExp() : r === 'lvl' ? pageLvl() : r === 'track' ? await pageTrack() : r === 'guild' ? await pageGuild() : r === 'chg' ? await pageChg() : r === 'help' ? pageHelp() : await pageMy();
       }catch(e){ html = blank('불러오기 오류', esc(e.message || e)); }
       const focus = document.activeElement?.dataset?.in;
       const pos = focus ? document.activeElement.selectionStart : 0;
       $('#main').innerHTML = NB(html);
+      if(r === 'lvl') initLvl();
       if(focus){ const el = document.querySelector(`[data-in="${focus}"]`); if(el){ el.focus(); el.setSelectionRange(pos, pos); } }
     }while(st.again);
   })();
@@ -1908,6 +2148,9 @@ document.addEventListener('click', async ev => {
     else if(act === 'setcur'){ setCur(b.dataset.w, b.dataset.n); await render(); window.scrollTo({top: 0}); }
     else if(act === 'tr-chk'){ TRCHK.has(k) ? TRCHK.delete(k) : TRCHK.add(k); render(); }
     else if(act === 'mv-apply'){ if(!confirm(`${b.dataset.on} → ${b.dataset.n} (${wName(b.dataset.w)}) 로 바꿀까요?\n추적 · 메모 · 입력한 마스터리가 함께 옮겨집니다.`)) return; applyMove(b.dataset.ow, b.dataset.on, b.dataset.w, b.dataset.n); toast('바꿨습니다'); await render(); }
+    else if(act === 'lv-apply1'){ if(LVMINE){ $('#lv-my').value = LVMINE; lvCalc(); $('#lv-my').scrollIntoView({behavior: 'smooth', block: 'center'}); } }
+    else if(act === 'lv-apply2'){ if(LVEST){ $('#lv-op').value = LVEST.top[0]; lvCalc(); $('#lv-op').scrollIntoView({behavior: 'smooth', block: 'center'}); } }
+    else if(act === 'lv-wclear'){ document.querySelectorAll('[data-lvw]').forEach(i => i.value = ''); lvMine(); }
     else if(act === 'tr-freset'){ Object.assign(TRF, {q: '', g: '', w: 0}); saveTRF(); render(); }
     else if(act === 'tr-chkall'){ const all = TRVIEW.keys.length ? TRVIEW.keys : ST.tracked.map(t => key(t.w, t.n)); if(all.every(x => TRCHK.has(x))) TRCHK.clear(); else all.forEach(x => TRCHK.add(x)); render(); }
     else if(act === 'tr-chknone'){ TRCHK.clear(); render(); }
@@ -1920,8 +2163,13 @@ document.addEventListener('click', async ev => {
       if(D.local) localApi('api/tracked', {chars: ST.tracked.map(t => [t.w, t.n])}).catch(() => {});
       await render(); toast(`${keys.length}명의 추적을 해제했습니다`);
     }
-    else if(act === 'trsel'){ TRSEL = k; lsSet('l9trsel', k); await render(); document.querySelector('.subj')?.scrollIntoView({behavior:'smooth', block:'start'}); }
-    else if(act === 'gotrack'){ TRSEL = k; lsSet('l9trsel', k); location.hash = '#track'; }
+    else if(act === 'trsel'){ TRSEL = k; lsSet('l9trsel', k); setTrTab('detail'); await render(); document.querySelector('.trtabs')?.scrollIntoView({behavior:'smooth', block:'start'}); }
+    else if(act === 'tr-tab'){ setTrTab(b.dataset.v); await render(); }
+    else if(act === 'tr-page'){ TRF.page = Number(b.dataset.p); await render(); document.querySelector('.trtabs')?.scrollIntoView({block:'start'}); }
+    else if(act === 'tr-step'){ TRSEL = b.dataset.k; lsSet('l9trsel', TRSEL); await render(); }
+    else if(act === 'tr-gopen'){ TRF.g = b.dataset.g; TRF.q = ''; TRF.page = 0; saveTRF(); setTrTab('list'); await render(); }
+    else if(act === 'tr-gsort'){ TRF.gsort = b.dataset.v; saveTRF(); await render(); }
+    else if(act === 'gotrack'){ TRSEL = k; lsSet('l9trsel', k); setTrTab('detail'); location.hash = '#track'; await render(); }
     // 경험치
     else if(act === 'exp-file') $('#fileShot').click();
     else if(act === 'exp-save') expSave();
@@ -1961,8 +2209,9 @@ document.addEventListener('change', e => {
   if(t === 'sc-w'){ SC.w = Number(e.target.value); SC.s = 0; saveSC(); RK.page = 0; render(); }
   else if(t === 'sc-s'){ SC.s = Number(e.target.value); saveSC(); RK.page = 0; render(); }
   else if(t === 'rk-job'){ RK.job = e.target.value; RK.page = 0; render(); }
-  else if(t === 'tr-g'){ TRF.g = e.target.value; saveTRF(); render(); }
-  else if(t === 'tr-w'){ TRF.w = Number(e.target.value); saveTRF(); render(); }
+  else if(t === 'tr-g'){ TRF.g = e.target.value; TRF.page = 0; saveTRF(); render(); }
+  else if(t === 'tr-pick'){ TRSEL = e.target.value; lsSet('l9trsel', TRSEL); render(); }
+  else if(t === 'tr-w'){ TRF.w = Number(e.target.value); TRF.page = 0; saveTRF(); render(); }
   else if(t === 'tr-sort'){ TRF.sort = e.target.value; saveTRF(); render(); }
   else if(t === 'cg-w'){ CG.w = Number(e.target.value); CG.s = 0; CG.page = 0; CG.mv = 24; CG.ldm = 24; CG.gom = 50; saveCG(); render(); }
   else if(t === 'cg-sort'){ CG.sort = e.target.value; CG.dir = CGDIR0[CG.sort] || -1; CG.page = 0; saveCG(); render(); }
@@ -1970,7 +2219,8 @@ document.addEventListener('change', e => {
 });
 let QT = null;
 document.addEventListener('input', e => {
-  if(e.target.dataset?.in === 'tr-q'){ TRF.q = e.target.value; saveTRF(); clearTimeout(QT); QT = setTimeout(render, 250); }
+  if(e.target.dataset?.in === 'tr-gq'){ TRF.gq = e.target.value; clearTimeout(QT); QT = setTimeout(render, 250); }
+  if(e.target.dataset?.in === 'tr-q'){ TRF.q = e.target.value; TRF.page = 0; saveTRF(); clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.dataset?.in === 'cg-q'){ CG.q = e.target.value; CG.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.id === 'gcmText') GCD[e.target.dataset.gk] = e.target.value;
   if(e.target.dataset?.in === 'rk-q'){ RK.q = e.target.value; RK.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
