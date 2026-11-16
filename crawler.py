@@ -19,6 +19,7 @@
   moves.json           최근 닉네임 변경 · 월드 이전 연결표
   changes.json         변경 이력 (닉네임·길드·월드·서버) + 월드/서버 이전 캐릭터 추적
   skip/<월드>.json     수집 기준 밖 캐릭터의 마지막 전투력 (조회 대상 고르기용)
+  transfer.json        월드/서버 이전 기간 (스토브 공지에서 읽음) — 이 기간에만 이전 연결 · 서버 변경을 인정
   watch.json           감시 캐릭터 {"월드|닉네임": 감시 끝 날짜번호} — 이전·닉변 직후 30일간 기준 밖이어도 계속 수집
 """
 import os
@@ -31,6 +32,7 @@ import shutil
 import argparse
 import threading
 import urllib.request
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone, date
 
@@ -198,23 +200,67 @@ class Prev:
 
     def __init__(self, src):
         self.src = (src or "").strip()
+        self._dk = None
+        self.net_err = False     # 파일이 '없음'(404)이 아니라 네트워크·서버 오류로 못 읽은 적이 있으면 True
+
+    def _raw(self, rel):
+        if not re.fullmatch(r"data/[A-Za-z0-9_./-]+", rel) or ".." in rel.split("/"):
+            return None
+        if self.src.startswith("http"):
+            url = self.src.rstrip("/") + "/" + rel
+            req = urllib.request.Request(url, headers={"User-Agent": "L9Tracker"})
+            for i in range(3):
+                try:
+                    with urllib.request.urlopen(req, timeout=60) as r:
+                        return r.read()
+                except urllib.error.HTTPError as e:
+                    if e.code in (404, 410):
+                        return None
+                    if i == 2:
+                        raise
+                except Exception:
+                    if i == 2:
+                        raise
+                time.sleep(2 * (i + 1))
+        p = os.path.join(self.src, *rel.split("/"))
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                return f.read()
+        return None
+
+    def _key(self):
+        """웹에 올린 데이터가 암호화돼 있으면(seal.py) key.json 의 mwrap 을 L9_KEY 로 풀어 데이터 키를 얻음"""
+        if self._dk is None:
+            import seal
+            kj = json.loads((self._raw("data/key.json") or b"{}").decode("utf-8"))
+            if not kj.get("mwrap"):
+                raise RuntimeError("전날 데이터가 암호화돼 있는데 data/key.json 이 없습니다")
+            self._dk = seal.dk_from_key_json(kj, os.environ.get("L9_KEY", "").strip())
+        return self._dk
 
     def read(self, rel):
         if not self.src:
             return None
         try:
-            if self.src.startswith("http"):
-                url = self.src.rstrip("/") + "/" + rel
-                req = urllib.request.Request(url, headers={"User-Agent": "L9Tracker"})
-                with urllib.request.urlopen(req, timeout=60) as r:
-                    return json.loads(r.read().decode("utf-8"))
-            p = os.path.join(self.src, *rel.split("/"))
-            if os.path.exists(p):
-                with open(p, encoding="utf-8") as f:
-                    return json.load(f)
+            b = self._raw(rel)
+        except Exception:
+            self.net_err = True
+            return None
+        if b is None:
+            return None
+        if b.startswith(b"L9E1"):
+            # 암호화된 전날 데이터 — 풀지 못하면 기록이 끊기지 않도록 수집을 멈춤 (조용히 None 을 돌려주지 않음)
+            import seal
+            try:
+                b = seal.unseal_bytes(self._key(), b)
+            except SystemExit as e:
+                raise RuntimeError(str(e))
+            except Exception as e:
+                raise RuntimeError(f"전날 데이터({rel})를 풀지 못했습니다 — L9_KEY 를 확인하세요 ({type(e).__name__})")
+        try:
+            return json.loads(b.decode("utf-8"))
         except Exception:
             return None
-        return None
 
 
 # ------------------------------------------------------------------ 일치도 (닉변·월드 이전 추적)
@@ -312,6 +358,238 @@ def name_related(a, b):
     return False
 
 
+# ------------------------------------------------------------------ 월드/서버 이전 기간 (공식 공지)
+# 로드나인은 공지된 이전 기간에만 월드 · 서버를 옮길 수 있다. 이 기간 밖에 월드나 서버가 바뀐 것처럼 보이면
+# 같은 캐릭터가 아니다(다른 캐릭터가 같은 이름을 쓰게 됨 등). 그래서 이전 연결 · 서버 변경 기록은 기간 안일 때만 인정한다.
+# 일정 확인은 매일 하지 않는다 (data/transfer.json 에 마지막 확인일 저장):
+#  - 월초(그달 첫 수집): 주요 일정 캘린더 글(월말에 다음 달 것이 올라옴 · 이미지라 날짜는 못 읽고 글만 기록) + 공지사항 확인
+#  - 평시: 공지사항은 7일에 한 번 (이전 사전 안내는 보통 열흘쯤 전에 올라옴)
+#  - 알려진 이전 기간 7일 전 ~ 기간 끝: 매일 공지사항 확인 (최종 확인 · 일정 변경 공지)
+# 읽지 못하면 아래 확인된 일정 + 지난번 저장한 일정을 쓴다.
+# 평시(이전 기간이 아닐 때)에는 월드 · 서버가 다른 후보와 잇지 않으므로 닉네임 변경만 찾고, 이전 기간에는 이전 · 세탁 의심까지 찾는다.
+NOTICE_API = "https://api.onstove.com/cwms/v3.0/article_group/BOARD/128074/article/list"
+CALENDAR_API = "https://api.onstove.com/cwms/v3.0/article_group/BOARD/144289/article/list"   # 주요 일정 캘린더
+TR_CHECK_DAYS = 7         # 평시 공지 확인 간격
+TR_PRE_DAYS = 7           # 이전 기간 며칠 전부터 매일 확인
+NOTICE_HEADERS = {"User-Agent": HEADERS["User-Agent"], "Origin": "https://page.onstove.com",
+                  "Referer": "https://page.onstove.com/", "Accept": "application/json"}
+WORLD_NAMES = ["린드리스", "울란", "디엔", "가르바나", "디나페리", "하칸"]
+TR_GRACE = 1              # 기간 끝난 다음 날 기준일 데이터까지 인정 (22시 마감 직전 이전 · 사이트 갱신 시각 차이)
+TR_SINCE = date(2026, 11, 17)
+SV_MASS = 30              # 한 월드에서 하루에 이보다 많이 '기간 밖 서버 변경'이 보이면 서버 통합 등으로 보고 기록을 지우지 않음   # 이 날 이전 기록은 이전 기간 확인 없이 쌓인 것 → 화면용으로 다시 거름
+_OLD3, _NEW2 = ["린드리스", "울란", "디엔"], ["가르바나", "디나페리"]
+TRANSFER_SEED = [   # 스토브 공지사항에서 확인한 일정 (2026-11-16)
+    {"s": "2026-11-25", "e": "2026-11-28", "world": _OLD3, "server": _NEW2, "id": "14630114", "t": "11/25(수) 월드/서버 이전 사전 안내"},
+    {"s": "2026-10-14", "e": "2026-10-17", "world": _OLD3, "server": _NEW2, "id": "14570860", "t": "10/14(수) 월드/서버 이전 사전 안내"},
+    {"s": "2026-09-02", "e": "2026-09-05", "world": _OLD3, "server": _NEW2, "id": "14438523", "t": "9/2(수) 월드/서버 이전 사전 안내"},
+    {"s": "2026-07-22", "e": "2026-07-25", "world": _OLD3, "server": _NEW2, "id": "13993310", "t": "7/22(수) 월드/서버 이전 사전 안내"},
+    {"s": "2026-06-10", "e": "2026-06-13", "world": _OLD3, "server": _NEW2, "id": "13525538", "t": "6/10(수) 월드/서버 이전 사전 안내"},
+    {"s": "2026-05-06", "e": "2026-05-08", "world": [], "server": ["디나페리"], "id": "13178687", "t": "5/6(수) 디나페리 서버 이전 사전 안내"},
+]
+
+
+def _names_in(s):
+    return [w for w in WORLD_NAMES if w in (s or "")]
+
+
+def parse_transfer(title, summary, posted):
+    """공지 한 건 → 이전 기간 {"s","e","world","server","t"} 또는 None.
+    posted: 게시일(date) — 공지 속 '11/25' 같은 날짜에 연도를 붙일 때 씀"""
+    t = title or ""
+    if "이전" not in t or not re.search(r"(사전 )?안내", t) or re.search(r"현상|이슈|불가|오류|길드 이전", t):
+        return None
+    if not re.search(r"월드|서버", t):
+        return None
+    s = re.sub(r"\s+", " ", summary or "")
+    m = re.search(r"이전 (?:진행 )?(?:기간|일정)\s*:?\s*(\d{1,2})/(\d{1,2})[^~]{0,30}~\s*(\d{1,2})/(\d{1,2})", s)
+    if not m:
+        m = re.search(r"(\d{1,2})/(\d{1,2})\s*\([^)]*\)[^~]{0,30}~\s*(\d{1,2})/(\d{1,2})", s)
+    if not m:
+        return None
+    m1, d1, m2, d2 = (int(x) for x in m.groups())
+    y1 = posted.year + (1 if m1 < posted.month - 6 else 0)
+    y2 = y1 + (1 if m2 < m1 else 0)
+    try:
+        st, en = date(y1, m1, d1), date(y2, m2, d2)
+    except ValueError:
+        return None
+    if not (0 <= (en - st).days <= 14):
+        return None
+    i = s.find("대상")
+    seg = s[i:i + 260] if i >= 0 else ""
+    seg = seg.split("※")[0]
+    world, server = [], []
+    seg = seg.replace("월드/서버 이전", "월드 서버 이전")     # 합친 표기는 라벨 없음으로 처리
+    wi, si = seg.find("월드 이전"), seg.find("서버 이전")
+    if wi >= 0 and si >= 0 or (wi >= 0) != (si >= 0) and "월드 서버 이전" not in seg:
+        if wi >= 0:
+            world = _names_in(seg[wi:si] if si > wi else seg[wi:])
+        if si >= 0:
+            server = _names_in(seg[si:wi] if wi > si else seg[si:])
+    else:
+        names = _names_in(seg) or _names_in(t)
+        if "월드" in t and "서버" not in t.replace("서버 이전", "") and "서버 이전" not in t:
+            world = names
+        elif "서버 이전" in t and "월드" not in t:
+            server = names
+        else:
+            world, server = names, names
+    if not world and not server:
+        return None
+    return {"s": st.isoformat(), "e": en.isoformat(), "world": world, "server": server, "t": t}
+
+
+def _stove_list(url, session=None):
+    if session is not None:
+        j = session.get(url, headers=NOTICE_HEADERS, timeout=20).json()
+    elif requests:
+        j = requests.get(url, headers=NOTICE_HEADERS, timeout=20).json()
+    else:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=NOTICE_HEADERS), timeout=20) as r:
+            j = json.loads(r.read().decode("utf-8"))
+    return ((j or {}).get("value") or {}).get("list") or []
+
+
+def fetch_calendar(log=print, session=None):
+    """주요 일정 캘린더 최신 글 {id, t, d} — 실패하면 None (캘린더는 이미지라 글 정보만)"""
+    try:
+        for a in _stove_list(f"{CALENDAR_API}?content_yn=N&summary_yn=N&sort_type_code=LATEST&page=1&size=5", session):
+            t = a.get("title") or ""
+            if "캘린더" in t:
+                d = datetime.fromtimestamp(int(a.get("create_datetime") or 0) / 1000, KST).date().isoformat()
+                return {"id": str(a.get("article_id") or ""), "t": t, "d": d}
+    except Exception as e:
+        log(f"주요 일정 캘린더 읽기 실패 ({e})")
+    return None
+
+
+def fetch_transfer(log=print, pages=2, session=None):
+    """스토브 공지사항에서 이전 기간 목록 읽기. 실패하면 None"""
+    out = []
+    for p in range(1, pages + 1):
+        url = f"{NOTICE_API}?content_yn=N&summary_yn=Y&sort_type_code=LATEST&page={p}&size=50"
+        try:
+            lst = _stove_list(url, session)
+        except Exception as e:
+            log(f"이전 일정 공지 읽기 실패 ({e}) — 저장된 일정을 씁니다")
+            return None
+        for a in lst:
+            try:
+                posted = datetime.fromtimestamp(int(a.get("create_datetime") or 0) / 1000, KST).date()
+                w = parse_transfer(a.get("title"), a.get("summary"), posted)
+                if w:
+                    w["id"] = str(a.get("article_id") or "")
+                    out.append(w)
+            except Exception:
+                continue
+        if not lst:
+            break
+    return out
+
+
+def merge_transfer(*lists):
+    """같은 기간(시작 · 끝)은 하나로 합치고 대상 월드 · 서버는 합집합"""
+    by = {}
+    for l in lists:
+        for w in l or ():
+            if not isinstance(w, dict) or not w.get("s") or not w.get("e"):
+                continue
+            k = (w["s"], w["e"])
+            if k not in by:
+                by[k] = {"s": w["s"], "e": w["e"], "world": [], "server": [], "id": w.get("id") or "", "t": w.get("t") or ""}
+            x = by[k]
+            for f in ("world", "server"):
+                for n in w.get(f) or ():
+                    if n not in x[f]:
+                        x[f].append(n)
+            if not x["id"] and w.get("id"):
+                x["id"], x["t"] = w["id"], w.get("t") or x["t"]
+    return sorted(by.values(), key=lambda w: w["s"], reverse=True)
+
+
+class Transfer:
+    """이전 기간 판정. kind: 'world'(월드 이전) · 'server'(같은 월드 안 서버 이전)"""
+
+    def __init__(self, windows, info=None):
+        self.info = dict(info or {})       # 마지막 확인일 · 캘린더 글 (data/transfer.json 에 같이 저장)
+        self.windows, self.w = [], []
+        for x in windows or ():
+            try:
+                s, e = dnum(date.fromisoformat(x["s"])), dnum(date.fromisoformat(x["e"]))
+                x = dict(x, world=[n for n in x.get("world") or [] if n in WORLD_NAMES] if isinstance(x.get("world"), list) else [],
+                         server=[n for n in x.get("server") or [] if n in WORLD_NAMES] if isinstance(x.get("server"), list) else [])
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue        # 깨진 일정 한 건 때문에 수집 전체가 멈추지 않도록
+            if s <= e:
+                self.windows.append(x)
+                self.w.append((s, e, x))
+
+    def ok(self, kind, d0, d1, wa, wb=None):
+        """d0 = 옮기기 전 자리에서 마지막으로 본 기준일, d1 = 옮긴 자리에서 처음 본 기준일.
+        이전 기간 [시작, 끝] 동안 옮겼어야 하므로 시작 <= d1 이고 d0 <= 끝 이며 그 기간의 대상이면 True.
+        (기록 날짜 하나만 아는 예전 기록은 d0 = 날짜-1 로 불러 '기간 끝난 다음 날 수집분'까지 인정 — TR_GRACE)
+        월드 이전: 떠난 월드 · 옮긴 월드 모두 월드 이전 대상. 서버 이전(같은 월드 안): 그 월드가 서버 이전 대상.
+        일정을 하나도 모르면(읽기 실패 + 저장 없음) 막지 않음."""
+        if not self.w:
+            return True
+        for s, e, x in self.w:
+            if s > d1 or e < d0:
+                continue
+            if kind == "world":
+                if wa in x["world"] and (wb is None or wb in x["world"]):
+                    return True
+            elif wa in x["server"]:
+                return True
+        return False
+
+    def active(self, d0, d1):
+        """d0~d1 사이에 열린 이전 기간이 하나라도 있으면 그 기간 (평시면 None)"""
+        for s, e, x in self.w:
+            if s <= d1 and e >= d0:
+                return x
+        return None
+
+    def window_of(self, kind, d, wa, wb=None):
+        for s, e, x in self.w:
+            if s <= d <= e and self.ok(kind, s, e, wa, wb):
+                return x
+        return None
+
+
+def load_transfer(prev, log=print, session=None, today=None, fetch=True):
+    """저장된 일정을 읽고, 확인할 때가 됐을 때만 스토브 공지 · 캘린더를 읽는다. today: 날짜(date)"""
+    today = today or now_kst().date()
+    saved = prev.read("data/transfer.json") if prev else None
+    if not isinstance(saved, dict):
+        saved = {"windows": saved if isinstance(saved, list) else []}
+    info = {k: saved.get(k) for k in ("checked", "cal_month", "calendar") if saved.get(k)}
+    base = Transfer(merge_transfer(saved.get("windows"), TRANSFER_SEED), info)
+    td = dnum(today)
+    try:
+        last = dnum(date.fromisoformat(info["checked"])) if info.get("checked") else None
+    except ValueError:
+        last = None
+    month = today.strftime("%Y-%m")
+    near = base.active(td - 1, td + TR_PRE_DAYS)       # 이전 기간 7일 전 ~ 끝(+1일)
+    why = ("월초 확인" if info.get("cal_month") != month else
+           f"이전 기간({near['s'][5:]}~{near['e'][5:]}) 확인" if near else
+           f"{TR_CHECK_DAYS}일마다 확인" if last is None or td - last >= TR_CHECK_DAYS else None)
+    if not fetch or not why:
+        return base
+    if info.get("cal_month") != month:
+        cal = fetch_calendar(log, session)
+        if cal:
+            info["calendar"], info["cal_month"] = cal, month
+            log(f"주요 일정 캘린더: {cal['t']} (이미지라 날짜는 공지로 확인)")
+    got = fetch_transfer(log, session=session)
+    if got is None:
+        return Transfer(base.windows, info)
+    info["checked"] = today.isoformat()
+    wins = merge_transfer(got, saved.get("windows"), TRANSFER_SEED)
+    log(f"이전 일정 공지 확인 ({why}) — 이전 안내 {len(got)}건 · 최근 일정 {wins[0]['s']} ~ {wins[0]['e']}" if wins else f"이전 일정 공지 확인 ({why})")
+    return Transfer(wins, info)
+
+
 # ------------------------------------------------------------------ 변환
 def to_int(x):
     try:
@@ -320,15 +598,23 @@ def to_int(x):
         return None
 
 
+RE_MCODE = re.compile(r"Mastery_[A-Za-z0-9]{1,40}")
+
+
+def _mc(x):
+    """마스터리 코드는 형식이 맞는 것만 (화면 HTML 에 들어가므로)"""
+    return x if isinstance(x, str) and RE_MCODE.fullmatch(x) else None
+
+
 def raw_row(v, name=None):
     """사이트 응답 → 열 배열 (직업·무기는 문자열 그대로)"""
     return [v.get("character_name") or name, to_int(v.get("server_code")) or 0, v.get("job_name") or "-",
-            v.get("mastery_image") or None, to_int(v.get("mastery_level")), to_int(v.get("mastery_rank")),
+            _mc(v.get("mastery_image")), to_int(v.get("mastery_level")), to_int(v.get("mastery_rank")),
             to_int(v.get("battle_power_point")), to_int(v.get("battle_power_world_rank")),
             to_int(v.get("battle_power_server_rank")), to_int(v.get("achievement_point")),
             to_int(v.get("specialize_level")), (v.get("guild_name") or "").strip(),
-            v.get("mastery_image1") or None, to_int(v.get("mastery_level1")),
-            v.get("mastery_image2") or None, to_int(v.get("mastery_level2"))]
+            _mc(v.get("mastery_image1")), to_int(v.get("mastery_level1")),
+            _mc(v.get("mastery_image2")), to_int(v.get("mastery_level2"))]
 
 
 def _dump(path, obj):
@@ -352,7 +638,7 @@ class Builder:
         self.jobs = list(self.old.get("jobs") or [])
         self.mcodes = [c for c, _ in MASTERIES]
         for c in self.old.get("mcodes") or []:
-            if c not in self.mcodes:
+            if _mc(c) and c not in self.mcodes:
                 self.mcodes.append(c)
         self.cur = {}
         self.wmeta = {}
@@ -361,6 +647,7 @@ class Builder:
         self.extra = {}
         self.hidden = set()          # 기준 밖이지만 전날 몰랐던 이름 (기준 밖 자리로 이전한 캐릭터 찾기용 연결 후보)
         self.watch = {}          # 감시 캐릭터 {키: 끝 날짜번호}
+        self.tr = Transfer(merge_transfer(TRANSFER_SEED))   # 월드/서버 이전 기간 (run 에서 공지를 읽어 바꿈)
 
     def jidx(self, j):
         j = j or "-"
@@ -371,6 +658,8 @@ class Builder:
     def midx(self, c):
         if not c:
             return -1
+        if not _mc(c):
+            return -1       # 형식이 다른 코드는 화면에 쓰지 않음 (HTML 삽입 방지)
         if c not in self.mcodes:
             self.mcodes.append(c)
         return self.mcodes.index(c)
@@ -479,6 +768,25 @@ class Builder:
         def new_fp(c):
             return {"j": c["j"], "bp": c["bp"], "ach": c["ach"], "sp": c["sp"], "ml": c["ml"], "lv": m_levels(c["m"])}
 
+        tr, blocked = self.tr, {"n": 0}
+        act = tr.active(today - LINK_DAYS, today)
+        log(f"이전 기간({act['s'][5:]}~{act['e'][5:]}) 반영 — 월드 · 서버 이전과 세탁 의심까지 확인" if act
+            else "평시(최근 이전 기간 없음) — 닉네임 변경만 확인 (월드 · 서버가 다른 캐릭터와는 잇지 않음)")
+
+        def move_ok(gk, h, c):
+            """사라진 캐릭터 gk → 후보 c 연결이 월드 · 서버를 바꾸는 경우, 그 사이에 열린 이전 기간이 있고 대상 월드 · 서버일 때만 True"""
+            gw = int(gk.split("|", 1)[0])
+            d0 = h["p"][-1][0] if h.get("p") else today - LINK_DAYS
+            if gw != c["w"]:
+                ok = tr.ok("world", d0, today, wname.get(gw, gw), wname.get(c["w"], c["w"]))
+            elif h.get("s") and c.get("s") and h["s"] != c["s"]:
+                ok = tr.ok("server", d0, today, wname.get(gw, gw))
+            else:
+                return True     # 같은 월드 · 서버 (닉네임 변경)는 언제든 가능
+            if not ok:
+                blocked.setdefault("k", set()).add(gk)
+            return ok
+
         pairs, fps = [], {}
         for gk in gone:
             h = hist[gk]
@@ -488,6 +796,8 @@ class Builder:
             gw, gn = gk.split("|", 1)
             for nk in by_job.get(h["j"], []):
                 c = cand[nk]
+                if not move_ok(gk, h, c):
+                    continue        # 이전 기간이 아닌데 월드 · 서버가 다름 → 같은 캐릭터일 수 없음
                 sc = match_score(old, c)
                 fp = fingerprint(old, new_fp(c), gap)
                 if fp:
@@ -566,6 +876,8 @@ class Builder:
                     c = cand[nk]
                     if nk in used_n or (c["w"] == int(gw) and c["s"] == h.get("s")):
                         continue
+                    if not move_ok(gk, h, c):
+                        continue
                     sc = match_score(old, c)
                     dml = (c["ml"] - old["ml"]) if isinstance(c["ml"], int) and isinstance(old["ml"], int) else 0
                     if sc >= 92 and lp[2] and -0.001 <= (c["ach"] - lp[2]) / lp[2] <= 0.005 and 0 <= dml <= 1:
@@ -582,6 +894,8 @@ class Builder:
                 if h.get("av") and c.get("av") and h["av"] != c["av"]:
                     mv["av"] = 1
                 moves.append(mv)
+        if blocked.get("k"):
+            log(f"이전 기간이 아닌데 월드 · 서버가 다른 후보만 있던 사라진 캐릭터 {len(blocked['k'])}명 — 그 후보와는 연결하지 않음")
         if likely:
             log(f"유력 후보 {likely}건 (확실히 단정할 수 없어 연결하지 않고 변경 이력에 표시)")
         n_out = sum(1 for k in extra if k in cur)
@@ -646,8 +960,33 @@ class Builder:
             if na:
                 log(f"연관 닉네임 추정 {na}건 (참고용)")
 
+        n_sv_skip = n_sv_other = 0
+        sv_odd = {}
         for k, c in cur.items():
             h = hist.get(k)
+            if h is not None and h.get("p") and h.get("s") and c["s"] and h["s"] != c["s"] \
+                    and not any(e[0] == today and e[1] == "월드 이전" for e in h.get("e") or ()) \
+                    and not tr.ok("server", h["p"][-1][0], today, wname.get(c["w"], c["w"])):
+                sv_odd.setdefault(c["w"], set()).add(k)
+        sv_mass = {w for w, ks in sv_odd.items() if len(ks) > SV_MASS}
+        for w in sv_mass:
+            log(f"주의: {wname.get(w, w)} 에서 이전 기간이 아닌데 서버가 바뀐 캐릭터가 {len(sv_odd[w])}명 — 서버 통합 · 공지 누락일 수 있어 기록은 그대로 이어가고 서버 이전으로만 남기지 않음")
+
+        def same_char(h, c):
+            try:
+                return h.get("j") == c["j"] and match_score(old_fp(h), c) >= 90
+            except (IndexError, KeyError, TypeError):
+                return True     # 비교할 수 없으면 기록을 지우지 않음
+        for k, c in cur.items():
+            h = hist.get(k)
+            if h is not None and k in sv_odd.get(c["w"], ()):
+                # 이전 기간이 아닌데 같은 이름의 서버가 바뀜 → 서버 이전이 아님
+                if c["w"] in sv_mass or same_char(h, c):
+                    n_sv_skip += 1          # 같은 캐릭터로 보임 (서버 번호 표시 차이 등) — 기록은 이어가되 서버 이전으로 남기지 않음
+                    h["s"] = c["s"]
+                else:
+                    n_sv_other += 1         # 다른 캐릭터가 이 이름을 쓰게 됨 — 예전 캐릭터 기록과 섞지 않고 새로 시작
+                    h = hist[k] = {"j": c["j"], "g": c["g"], "s": c["s"], "p": [], "e": []}
             if h is None:
                 h = hist[k] = {"j": c["j"], "g": c["g"], "s": c["s"], "p": [], "e": []}
             if h["p"] and h["p"][-1][0] == today:
@@ -655,8 +994,8 @@ class Builder:
             if h["p"]:
                 if (h.get("g") or "") != (c["g"] or ""):
                     h["e"].append([today, "길드 변경", h.get("g") or "", c["g"] or "", None])
-                if h.get("s") and c["s"] and h["s"] != c["s"]:
-                    h["e"].append([today, "서버 변경", f"{h['s']}서버", f"{c['s']}서버", None])
+                if h.get("s") and c["s"] and h["s"] != c["s"] and not any(e[0] == today and e[1] == "월드 이전" for e in h["e"]):
+                    h["e"].append([today, "서버 변경", f"{h['s']}서버", f"{c['s']}서버", None])   # 월드 이전 때 서버 번호 차이는 서버 이전이 아님
                 if h.get("j") != c["j"] and isinstance(h.get("j"), int):
                     h["e"].append([today, "직업 변경", jobs[h["j"]] if 0 <= h["j"] < len(jobs) else "", jobs[c["j"]], None])
             h["j"], h["g"], h["s"] = c["j"], c["g"], c["s"]
@@ -664,6 +1003,8 @@ class Builder:
             h["av"] = c.get("av") or ""
             h["p"].append([today, c["bp"], c["ach"], c["ml"], c["mr"], c["sp"], c["mc"]])
 
+        if n_sv_skip or n_sv_other:
+            log(f"이전 기간 밖 서버 변경 무시: 같은 캐릭터 {n_sv_skip}명 · 같은 이름의 다른 캐릭터 {n_sv_other}명")
         cut = today - HIST_DAYS
         for k in list(hist):
             h = hist[k]
@@ -671,11 +1012,13 @@ class Builder:
             h["e"] = [e for e in h["e"] if e[0] > today - 365][-30:]
             if not h["p"]:
                 del hist[k]
-        moves = [m for m in moves if m["d"] > today - MOVE_DAYS]
+        legal = make_legal(tr, wname, today)
+        moves = [m for m in moves if m["d"] > today - MOVE_DAYS and (m.get("lv") not in ("확실", "유력") or legal_move(legal, m))]
         vis = {k: v for k, v in cur.items() if k not in self.hidden} if self.hidden else cur   # 오늘 chars 파일에 있는 캐릭터
         _dump(os.path.join(self.data, "gevents.json"), build_gevents(hist, vis, self.mcodes, today))
         _dump(os.path.join(self.data, "changes.json"),
-              build_changes(hist, vis, self.mcodes, today, wname, moves, {w: a for w, a in self.alive.items() if w in done_w}, jobs, self.hidden))
+              build_changes(hist, vis, self.mcodes, today, wname, moves, {w: a for w, a in self.alive.items() if w in done_w}, jobs, self.hidden, tr))
+        _dump(os.path.join(self.data, "transfer.json"), dict(tr.info, windows=tr.windows))
         _dump(os.path.join(self.data, "watch.json"), self.watch)
         shards = [dict() for _ in range(SHARDS)]
         for k, h in hist.items():
@@ -799,7 +1142,7 @@ def launder_level(rn, gch, avch, hops):
     return "낮음" if gch else None
 
 
-def build_launder(hist, cur, mcodes, today, wname, moves, hidden=frozenset()):
+def build_launder(hist, cur, mcodes, today, wname, moves, hidden=frozenset(), legal=None):
     """신분 세탁 의심: 월드 · 서버 이전과 함께 닉네임 · 길드 · 의상을 바꾼 캐릭터 (최근 CHANGE_DAYS일, 최신 순)
     - 확실 · 유력 연결 중 월드나 서버가 바뀐 것 (서버 이전은 같은 월드 안에서만 비교 — 월드가 다르면 서버 번호는 의미 없음)
     - 같은 이름 그대로 서버만 바뀌고 같은 날 길드도 바뀐 기록
@@ -822,9 +1165,10 @@ def build_launder(hist, cur, mcodes, today, wname, moves, hidden=frozenset()):
     def tdays(k):
         return {e[0] for e in (hist.get(k) or {}).get("e", ()) if e[1] in ("월드 이전", "서버 변경", "닉네임 변경") and e[0] > cut}
 
+    legal = legal or (lambda *a: True)
     out = []
     for m in moves:
-        if m.get("lv") not in ("확실", "유력") or m["d"] <= cut:
+        if m.get("lv") not in ("확실", "유력") or m["d"] <= cut or not legal_move(legal, m):
             continue
         fw, fn = m["from"]
         tw, tn = m["to"]
@@ -857,7 +1201,7 @@ def build_launder(hist, cur, mcodes, today, wname, moves, hidden=frozenset()):
     for k, h in hist.items():       # 같은 이름으로 서버만 이전 + 같은 날 길드 변경
         ev = h.get("e") or []
         for x in ev:
-            if x[1] != "서버 변경" or x[0] <= cut:
+            if x[1] != "서버 변경" or x[0] <= cut or not legal(x, int(k.split("|", 1)[0])):
                 continue
             same = [y for y in ev if y[0] == x[0]]
             ge = [y for y in same if y[1] == "길드 변경"]
@@ -911,16 +1255,53 @@ def build_gone(hist, cur, mcodes, today, alive, jobs):
     return out
 
 
-def build_changes(hist, cur, mcodes, today, wname, moves=(), alive=None, jobs=(), hidden=frozenset()):
+def legal_move(legal, m):
+    """연결표 한 건(m)이 이전 기간 확인을 통과하는지 (월드 · 서버가 바뀐 경우만 확인)"""
+    fw, tw = m["from"][0], m["to"][0]
+    fs, ts = (m.get("fs") or [0])[0], (m.get("ts") or [0])[0]
+    if fw != tw:
+        return legal([m["d"], "월드 이전", fw, tw], fw)
+    if fs and ts and fs != ts:
+        return legal([m["d"], "서버 변경", fs, ts], fw)
+    return True
+
+
+def make_legal(tr, wname, today):
+    """변경 기록 e=[날짜, 종류, 이전, 이후, ...] 가 이전 기간에 맞는지. TR_SINCE 이후 기록은 수집할 때 이미 확인했으므로 통과.
+    그 전 기록(확인 없이 쌓인 것)은 기록 날짜가 이전 기간(+여유) 안이고 대상 월드 · 서버일 때만 인정."""
+    since = dnum(TR_SINCE)
+
+    def nm(v):
+        return wname.get(v, v) if isinstance(v, int) else v
+
+    def legal(e, w):
+        if e[1] not in ("월드 이전", "서버 변경") or e[0] >= since or tr is None:
+            return True
+        d = e[0]
+        if e[1] == "월드 이전":
+            return tr.ok("world", d - TR_GRACE, d, nm(e[2]), nm(e[3]))
+        return tr.ok("server", d - TR_GRACE, d, nm(w))
+    return legal
+
+
+def build_changes(hist, cur, mcodes, today, wname, moves=(), alive=None, jobs=(), hidden=frozenset(), tr=None):
     """변경 이력: 최근 CHANGE_DAYS일 닉네임·길드·월드·서버 변경 목록 + 월드/서버 이전 캐릭터별 전체 변경 내역.
     list 한 줄 = [날짜, 종류번호, 월드, 서버, 현재 닉네임, 이전, 이후, 현재 길드, 전투력, 대표 마스터리 레벨, 대표 무기, 현재 수집 대상인지,
                  확실도(1 확실 · 2 유력 · 0 해당 없음), 유력 후보 수, 일치도, 전문화, 업적점수]
     names = 닉네임을 바꾼 적이 있는 캐릭터의 [월드, 현재 닉네임, [[날짜, 이전, 이후], ...], 현재 수집 대상인지] (이전 닉네임 검색용)
     assoc = 연관 닉네임 추정 (참고용)"""
     cut = today - CHANGE_DAYS
+    legal = make_legal(tr, wname, today)
     lst, moved, names, assoc = [], [], [], []
+    n_ill = 0
     for k, h in hist.items():
         ev = [e for e in h.get("e", []) if e[1] in CHANGE_KINDS]
+        bad = [e for e in ev if not legal(e, int(k.split("|", 1)[0]))]
+        bad_d = {e[0] for e in bad if e[1] == "월드 이전"}     # 기간 밖 월드 이전 연결 → 그날 함께 생긴 닉네임 · 길드 · 서버 변경도 다른 캐릭터를 잇다 생긴 것
+        bad += [e for e in ev if e[0] in bad_d and e not in bad]
+        if bad:
+            n_ill += sum(1 for e in bad if e[0] > cut)
+            ev = [e for e in ev if e not in bad]
         if not ev:
             continue
         w, n = k.split("|", 1)
@@ -958,6 +1339,9 @@ def build_changes(hist, cur, mcodes, today, wname, moves=(), alive=None, jobs=()
                           "seen": bool(c), "rel": m.get("rel") or []})
         if m.get("lv") != "유력" or m["d"] <= cut:
             continue
+        if not legal_move(legal, m):
+            n_ill += 1
+            continue
         fw, fn = m["from"]
         tw, tn = m["to"]
         fs, fg = (m.get("fs") or [0, ""])
@@ -982,8 +1366,10 @@ def build_changes(hist, cur, mcodes, today, wname, moves=(), alive=None, jobs=()
     gone = build_gone(hist, cur, mcodes, today, alive or {}, jobs or [])
     return {"date": today, "days": CHANGE_DAYS, "kinds": CHANGE_KINDS, "list": lst[:CHANGE_MAX], "moved": moved[:3000],
             "names": names, "assoc": assoc[:2000],
-            "launder": build_launder(hist, cur, mcodes, today, wname, moves, hidden),
-            "gone": gone[:GONE_MAX], "gone_total": len(gone)}
+            "launder": build_launder(hist, cur, mcodes, today, wname, moves, hidden, legal),
+            "gone": gone[:GONE_MAX], "gone_total": len(gone),
+            "windows": (tr.windows if tr else [])[:12], "illegal": n_ill,
+            "trinfo": dict((tr.info if tr else {}), active=bool(tr and tr.active(today - LINK_DAYS, today)))}
 
 
 def crawl_world(fetch, wc, names, workers, tick):
@@ -1061,25 +1447,63 @@ def quick_update(out, fetch, chars, dd, worlds=None, log=print):
     return res
 
 
+def _int_in(v, lo, hi):
+    """정수이고 lo~hi 범위일 때만 그 값을, 아니면 None (bool·실수·문자열 거부)"""
+    if isinstance(v, bool) or not isinstance(v, int) or v < lo or v > hi:
+        return None
+    return v
+
+
+def sanitize_meta(meta, log=print):
+    """이전 결과물의 meta.json 은 신뢰하지 않음: 월드 코드는 0~999999 정수만, shards 는 1~256 정수만 (파일 경로에 쓰이므로)"""
+    if not isinstance(meta, dict):
+        return meta
+    ws = []
+    for w in meta.get("worlds") or []:
+        c = _int_in(w.get("code"), 0, 999999) if isinstance(w, dict) else None
+        if c is None:
+            log("meta 의 월드 코드가 올바르지 않아 건너뜁니다.")
+            continue
+        w = dict(w)
+        w["code"] = c
+        ws.append(w)
+    meta = dict(meta)
+    meta["worlds"] = ws
+    meta["shards"] = _int_in(meta.get("shards"), 1, 256) or SHARDS
+    return meta
+
+
 def copy_prev(out, prev, log=print):
     """수집 없이 이전 데이터를 그대로 가져와 배치 (화면 코드만 바뀐 경우)"""
-    meta = prev.read("data/meta.json")
+    prev.net_err = False
+    meta = sanitize_meta(prev.read("data/meta.json"), log)
     if not meta:
-        log("이전 데이터가 없습니다 — 빈 화면으로 배포합니다.")
+        if prev.net_err:
+            log("이전 데이터를 읽지 못했습니다 (네트워크·서버 오류).")
+        else:
+            log("이전 데이터가 없습니다 — 빈 화면으로 배포합니다.")
         return None
     data = os.path.join(out, "data")
     os.makedirs(os.path.join(data, "chars"), exist_ok=True)
     os.makedirs(os.path.join(data, "hist"), exist_ok=True)
     os.makedirs(os.path.join(data, "skip"), exist_ok=True)
-    files_extra = ["data/gevents.json", "data/changes.json", "data/watch.json"] + [f"data/skip/{w['code']}.json" for w in meta.get("worlds", []) if w.get("rule")]
+    files_extra = ["data/gevents.json", "data/changes.json", "data/watch.json", "data/transfer.json"] + [f"data/skip/{w['code']}.json" for w in meta.get("worlds", []) if w.get("rule")]
     files = ["data/meta.json", "data/moves.json"] + files_extra + [f"data/chars/{w['code']}.json" for w in meta.get("worlds", [])] \
         + [f"data/hist/{i:02d}.json" for i in range(meta.get("shards", SHARDS))]
+    out_real = os.path.realpath(out)
     for rel in files:
         j = prev.read(rel)
         if j is None:
             continue
-        with open(os.path.join(out, *rel.split("/")), "w", encoding="utf-8") as f:
+        dst = os.path.join(out, *rel.split("/"))
+        if not os.path.realpath(dst).startswith(out_real + os.sep):
+            log(f"출력 폴더 밖으로 나가는 경로라 건너뜁니다: {rel[:80]!r}")
+            continue
+        with open(dst, "w", encoding="utf-8") as f:
             json.dump(j, f, ensure_ascii=False, separators=(",", ":"))
+    if prev.net_err:
+        log("이전 데이터 일부를 읽지 못했습니다 (네트워크·서버 오류) — 불완전한 데이터는 배포하지 않습니다.")
+        return None
     log(f"이전 데이터 복사 완료 (기준일 {meta.get('date')})")
     return meta
 
@@ -1158,7 +1582,12 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
     if site_dir:
         copy_site(site_dir, out)
     if no_crawl:
-        return "copied", copy_prev(out, prev, log)
+        meta = copy_prev(out, prev, log)
+        if meta is None and prev_src:
+            # 이전 데이터를 못 읽었는데 그대로 배포하면 빈 사이트가 올라감 → 실패로 처리해 배포를 막음
+            log("이전 데이터를 읽지 못해 배포를 중단합니다.")
+            return "error", None
+        return "copied", meta
     dd = data_date_for(now)
     if dd is None and not force:
         log("지금은 사이트 데이터 갱신 시간(10~12시)입니다.")
@@ -1166,7 +1595,10 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
             copy_prev(out, prev, log)
         return ("copied" if used_seed else "refreshing"), None
     dd = dd or (now or now_kst()).date() - timedelta(days=1)
-    old = prev.read("data/meta.json")
+    old = sanitize_meta(prev.read("data/meta.json"), log)
+    if old is None and getattr(prev, "net_err", False):
+        log("전날 데이터를 읽지 못했습니다 (네트워크 오류) — 기록이 끊기지 않도록 이번 수집을 멈춥니다")
+        return "error", None
     if old and old.get("date") == dd.isoformat() and not old.get("partial") and not force:
         log(f"이미 {dd} 기준 데이터가 있습니다.")
         if not same:
@@ -1184,6 +1616,7 @@ def run(out, prev_src="", mode="자동", rate=6.0, workers=4, force=False, no_cr
     if first_worlds:                   # 추적 중인 캐릭터의 월드를 먼저
         worlds.sort(key=lambda w: (0 if w[0] in first_worlds else 1))
     B = Builder(out, dd, old or {}, worlds)
+    B.tr = load_transfer(prev, log, today=(now or now_kst()).date())
     names = {}
     for wc, wn in worlds:
         try:
