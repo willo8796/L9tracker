@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.4.3';
+const VERSION = '1.5.0';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -1268,7 +1268,7 @@ function ldReasons(x, W){
   if((x.flags || []).includes('기준 밖에서 발견')) r.push('<b>수집 기준 밖에서 발견</b> — 옮긴 뒤 랭킹 기준 밖 자리에서 찾음 (눈에 덜 띄는 곳으로 옮김)');
   if(x.hops >= 2) r.push(`<b>반복</b> — 최근 45일 동안 이전 · 닉네임 변경을 ${nf(x.hops)}번 한 캐릭터`);
   if(x.now && (x.now.n !== t.n || x.now.w !== t.w)) r.push(`이후에도 다시 바뀜 — 지금 ${esc(wName(x.now.w))} · ${esc(x.now.n)}`);
-  r.push(x.lv === '확실' ? '같은 캐릭터 판정: <b>확실</b> (직업 · 업적점수 · 마스터리 · 전문화 · 전투력이 맞는 캐릭터가 한 명뿐)'
+  r.push(x.lv === '확실' ? '같은 캐릭터 판정: <b>확실</b> (업적점수 · 무기별 마스터리 · 전문화 · 전투력이 맞는 캐릭터가 한 명뿐이거나 점수 차이가 뚜렷함)'
     : `같은 캐릭터 판정: <b>유력</b>${x.nc > 1 ? ` (후보 ${nf(x.nc)}명` : ' ('}${x.score != null ? `${x.nc > 1 ? ' · ' : ''}일치도 ${esc(x.score)}%` : ''}) — 다른 캐릭터일 수 있음`);
   return r;
 }
@@ -1374,7 +1374,7 @@ function goneTab(L, ch){
     <div class="sec">행방 불명 목록 <small>${nf(gone.length)}명${ch.gone_total > (ch.gone || []).length ? ` · 전체 ${nf(ch.gone_total)}명 중 최근 ${nf((ch.gone || []).length)}명만 보관` : ''}</small></div>
     ${gone.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk gone"><tr><th>마지막 확인</th><th>이유</th><th class="l">캐릭터</th><th class="cgws">월드</th><th class="cgws">서버</th><th class="l hide-s">길드</th><th class="hide-s">직업</th><th>전투력</th><th>대표 마스터리</th><th>전문화</th></tr>
       ${gone.slice(0, CG.gom).map(x => `<tr><td class="dg" style="font-size:16px">${esc(dayStr(x.last).slice(5))}</td><td>${x.why ? `<span class="cfb ${WHY[x.why] || 'c3'}">${esc(x.why)}</span>` : '<span class="sub">-</span>'}</td>
-        <td class="l"><div class="nm">${esc(x.n)}</div><div class="sub msub">${esc(wName(x.w))} ${serverLabel(x.s)}${x.g ? ' · ' + esc(x.g) : ''}</div></td>
+        <td class="l"><div class="nm">${esc(x.n)}${x.sw ? ' <small class="sub" style="display:inline" title="계정 매매 · 닉네임 맞바꾸기 등으로 지금 이 이름은 다른 캐릭터가 씀">(이름 넘겨줌)</small>' : ''}</div><div class="sub msub">${esc(wName(x.w))} ${serverLabel(x.s)}${x.g ? ' · ' + esc(x.g) : ''}</div></td>
         <td class="cgws">${esc(wName(x.w))}</td><td class="cgws dg" style="font-size:16px">${x.s ? pad2(x.s) : '--'}</td>
         <td class="l hide-s">${x.g ? esc(x.g) : '<span class="sub">-</span>'}</td><td class="hide-s">${esc(x.j || '--')}</td>
         <td><span class="big" style="font-size:18px">${nf(x.bp)}</span></td><td><span class="dg" style="font-size:17px">${nf(x.ml)}</span><div class="sub">${esc(mname(x.mc))}</div></td>
@@ -1399,7 +1399,7 @@ function assocTab(as){
 }
 function movedTab(mv, ch){
   return cgNote(`월드나 서버를 옮긴 캐릭터를 자동으로 따라가서, 옮긴 뒤 <b>닉네임과 길드가 어떻게 바뀌었는지</b> 순서대로 보여줍니다. 별도로 등록할 필요 없이 이전이 확인되면 자동으로 이 목록에 들어옵니다.<br>
-      <b class="cfb c1">확실</b> 직업 · 업적점수 · 마스터리 3종 · 전문화 · 전투력이 모두 맞는 캐릭터가 한 명뿐이라 같은 캐릭터로 이어 붙임 &nbsp;
+      <b class="cfb c1">확실</b> 업적점수 · 무기별 마스터리 · 전문화 · 전투력이 맞는 캐릭터가 한 명뿐(또는 점수 차이가 뚜렷함)이라 같은 캐릭터로 이어 붙임 (직업 · 무기는 자유롭게 바꿀 수 있어 보지 않음) &nbsp;
       <b class="cfb c2">유력</b> 비슷하지만 후보가 여럿이거나 일부 값이 달라 단정할 수 없음 (추적은 자동으로 옮기지 않고, [추적]에서 직접 바꿀 수 있음)`)
     + trWinNote(ch) + `<div class="ctrls"><span class="lbl">이전 종류</span>${seg('cg-mk', CG.mk, [[-1, '전체'], [2, '월드 이전'], [3, '서버 이전']])}
       <span class="lbl">확실도</span>${seg('cg-mcf', CG.mcf, [[0, '전체'], [1, '확실'], [2, '유력']])}
@@ -1483,7 +1483,7 @@ async function pageChg(){
     const pages = Math.max(1, Math.ceil(view.length / PAGE)); CG.page = Math.min(CG.page, pages - 1);
     const slice = view.slice(CG.page * PAGE, CG.page * PAGE + PAGE);
     body = cgNote(`매일 자동 수집 때 <b>전날 수집 결과와 비교</b>해 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터를 바로 기록합니다. 공식 사이트가 하루 한 번(10~12시) 갱신되므로 하루 단위로 쌓입니다.
-      닉네임을 바꾸거나 월드를 옮긴 캐릭터는 직업 · 전투력 · 업적점수 · 전문화가 거의 같은 캐릭터를 찾아 자동으로 이어 붙입니다.`)
+      닉네임을 바꾸거나 월드를 옮긴 캐릭터는 업적점수 · 무기별 마스터리 · 전문화 · 전투력이 이어지는 캐릭터를 찾아 자동으로 이어 붙입니다 (직업이 바뀌어도 찾음).`)
     + `<div class="kpis">${CK.map((l, i) => `<div class="kpi"><div class="lb">${l} (명)</div><div class="v">${nf(cnt[i])}</div><div class="s">${esc(perLbl)}${CG.w ? ' · ' + esc(wName(CG.w)) : ''}</div></div>`).join('')}
       <div class="kpi"><div class="lb">유력 후보 (건)</div><div class="v" style="color:var(--amb)">${nf(lk)}</div><div class="s">확실하지 않아 이어 붙이지 않음</div></div></div>
     <div class="ctrls"><span class="lbl">종류</span>${seg('cg-kind', CG.kind, [[-1, '전체'], [0, '닉네임'], [1, '길드'], [2, '월드 이전'], [3, '서버 이전']])}
@@ -1733,12 +1733,16 @@ function pageHelp(){
   + sec('캐릭터 추적 방식 (닉네임 변경 · 월드 · 서버 이전)', `
     <p>공식 사이트에는 캐릭터 고유 번호가 없어서, 매일 수집 때 <b>어제 있다가 오늘 사라진 캐릭터</b>와 <b>오늘 처음 보이는 캐릭터</b>의 수치를 비교해 같은 캐릭터를 찾습니다.</p>
     <table class="htbl"><tr><th>비교 항목</th><th>같은 캐릭터로 보는 범위</th></tr>
-      <tr><td>직업</td><td>같아야 함</td></tr>
-      <tr><td>업적점수</td><td>줄지 않고 하루 0.3% 이내로 늘어남</td></tr>
-      <tr><td>마스터리 3종</td><td>무기 3개 레벨이 각각 그대로이거나 1 이내로 오름</td></tr>
-      <tr><td>전문화</td><td>줄지 않고 2~3 이내로 오름</td></tr>
-      <tr><td>전투력</td><td>−5% ~ +10%</td></tr></table>
-    <ul><li><b>확실</b>: 위 항목이 모두 맞는 캐릭터가 <b>한 명뿐</b>일 때(또는 같은 서버 · 같은 길드에서 닉네임만 바뀐 경우) 같은 캐릭터로 이어 붙입니다. 이름 · 월드 · 서버가 모두 바뀌어도 찾습니다. 추적 · 메모도 새 이름으로 자동으로 옮겨집니다.</li>
+      <tr><td>직업 · 무기 종류</td><td>보지 않음 (언제든 자유롭게 바꿀 수 있음)</td></tr>
+      <tr><td>업적점수</td><td>줄지 않고 하루 1% 이내로 늘어남 (실제로는 대부분 하루 0.1% 안팎)</td></tr>
+      <tr><td>무기별 마스터리</td><td>같은 무기의 레벨은 줄지 않음</td></tr>
+      <tr><td>전문화</td><td>줄지 않고 하루 2 이내로 오름</td></tr>
+      <tr><td>전투력</td><td>−40% ~ +5%(하루 1%씩 더) — 장비 교체로 크게 떨어지기도 함</td></tr>
+      <tr><td>서버 · 월드</td><td>이전 기간이 아니면 같아야 함</td></tr></table>
+    <p class="mut">실측(가르바나 전투력 20만 이상 371명, 이틀 간격): 위 범위로 370명이 자기 자신만 찾았고, 다른 캐릭터와 겹친 4명도 점수 1등이 모두 본인이었습니다.</p>
+    <ul><li><b>확실</b>: 위 범위에 맞는 캐릭터가 <b>서로 한 명뿐</b>이거나, 여럿이어도 서로 1등이고 2등과 점수 차이가 뚜렷할 때 같은 캐릭터로 이어 붙입니다. 이름 · 월드 · 서버 · 직업이 모두 바뀌어도 찾습니다. 추적 · 메모도 새 이름으로 자동으로 옮겨집니다.</li>
+      <li><b>이름 넘겨받기</b>: 계정 매매 · 닉네임 맞바꾸기로 <b>다른 캐릭터가 같은 이름</b>을 쓰게 되면(업적점수 · 전문화 · 무기 레벨이 줄어드는 등) 예전 기록을 떼어 내 '<b>이름(예전)</b>'으로 두고, 예전 캐릭터의 새 이름을 찾아 이어 붙입니다.</li>
+      <li>업적점수가 0인 캐릭터는 비교할 값이 적어 <b>유력</b>으로만 표시합니다.</li>
       <li><b>유력</b>: 맞는 후보가 여럿이거나 일부 값이 조금 다를 때는 단정하지 않고 [변경 이력]에 유력으로만 표시합니다. 추적 중인 캐릭터라면 [추적] 화면에 후보가 나오고 [이 캐릭터로 바꾸기]로 직접 옮길 수 있습니다.</li>
       <li>사라진 뒤 <b>14일 안</b>에 다시 나타나면 이어 붙입니다. 옮긴 곳에서 수집 기준(구월드 17만 · 신월드 500위) 밖이면 기준 안으로 들어온 날 찾습니다.</li></ul>`)
   + sec('월드 · 서버 이전 세탁 추적', `
@@ -1750,7 +1754,7 @@ function pageHelp(){
       <li><b>행방 불명</b>: 사라졌지만 14일 안에 같은 캐릭터를 아직 찾지 못한 캐릭터입니다. 삭제됐거나 순위 밖으로 밀려난 경우일 수도 있습니다.</li></ul>`)
   + sec('알아둘 점', `
     <ul><li>추적 · 메모 · 마스터리 입력 · 경험치 기록은 <b>이 브라우저에만</b> 저장됩니다. 다른 기기로 옮기려면 [캐릭터] · [추적] 아래 [백업 저장] / [백업 불러오기]를 쓰세요.</li>
-      <li>같은 월드 안 닉네임 변경은 직업 · 업적점수 · 길드 · 서버가 거의 같을 때만 자동으로 연결합니다(잘못 연결 방지). 못 따라가면 [추적]의 [닉네임/월드]로 직접 바꾸세요.</li>
+      <li>닉네임 변경은 업적점수 · 무기별 마스터리 · 전문화 · 전투력이 이어지는 캐릭터가 확실할 때만 자동으로 연결합니다(잘못 연결 방지). 못 따라가면 [추적]의 [닉네임/월드]로 직접 바꾸세요.</li>
       <li>공식 공개 API가 아니라 공식 사이트가 쓰는 데이터를 이용합니다. 공식 사이트가 바뀌면 수정이 필요할 수 있습니다.</li>
       <li>버전 ${VERSION}</li></ul>`)
   + `</div>`;
