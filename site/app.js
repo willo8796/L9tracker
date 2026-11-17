@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.4.2';
+const VERSION = '1.4.3';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -232,7 +232,7 @@ function world(wc){
 }
 // 수집 기준 (crawler.py 의 WORLD_RULES 와 같게 유지)
 const WORLD_GROUPS = {'구월드': ['울란', '디엔', '린드리스'], '신월드': ['가르바나', '디나페리', '하칸']};
-const GROUP_RULE = {'구월드': '전투력 14만 이상', '신월드': '서버별 전투력 상위 500위'};
+const GROUP_RULE = {'구월드': '전투력 17만 이상', '신월드': '서버별 전투력 상위 500위'};
 function ruleTxt(g){ return GROUP_RULE[g]; }
 function critText(){ return (D.meta?.worlds || []).some(w => w.rule) ? `구월드 ${ruleTxt('구월드')} · 신월드 ${ruleTxt('신월드').replace('서버별 전투력 ', '서버별 ')} 기준` : '서버별 전투력 1,000위 안 캐릭터 기준'; }
 const CRIT_SHORT = () => (D.meta?.worlds || []).some(w => w.rule) ? '수집 기준' : '서버 전투력 1,000위';
@@ -1158,9 +1158,9 @@ async function pageGuild(){
 const CG = (() => {
   const x = pickVals(lsJson('l9chg', sessionStorage), {per: ['n', 1, 9999], kind: ['n', -1, 99], w: ['n', 0, 999999], s: ['n', 0, 999999], q: ['s', 100], cf: ['n', 0, 99],
     sort: ['e', ['d', 'kind', 'name', 'world', 'server', 'bp', 'ml', 'sp']], dir: ['e', [1, -1]], ld: ['e', ['', '높음', '보통', '낮음']], lcf: ['n', 0, 99], mcf: ['n', 0, 99], mk: ['n', -1, 99],
-    msort: ['e', ['d', 'bp']], gsort: ['e', ['d', 'bp']], ak: ['e', ['', '사라진 캐릭터', '다른 캐릭터의 예전 이름', '같은 월드 현재 캐릭터']]}, {});
-  return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0, sort: 'd', dir: -1, ld: '', lcf: 0, mcf: 0, mk: -1, msort: 'd', gsort: 'd', ak: ''}, x, {page: 0, mv: 24, asm: 24, ldm: 24, gom: 50}); })();
-function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf, sort: CG.sort, dir: CG.dir, ld: CG.ld, lcf: CG.lcf, mcf: CG.mcf, mk: CG.mk, msort: CG.msort, gsort: CG.gsort, ak: CG.ak})); }catch(e){} }
+    msort: ['e', ['d', 'bp']], gsort: ['e', ['d', 'bp']], gw: ['e', ['', '기준선 근처', '이전 기간', '닉변·삭제 추정']], ak: ['e', ['', '사라진 캐릭터', '다른 캐릭터의 예전 이름', '같은 월드 현재 캐릭터']]}, {});
+  return Object.assign({per: 7, kind: -1, w: 0, s: 0, q: '', page: 0, mv: 24, cf: 0, sort: 'd', dir: -1, ld: '', lcf: 0, mcf: 0, mk: -1, msort: 'd', gsort: 'd', gw: '', ak: ''}, x, {page: 0, mv: 24, asm: 24, ldm: 24, gom: 50}); })();
+function saveCG(){ try{ sessionStorage.setItem('l9chg', JSON.stringify({per: CG.per, kind: CG.kind, w: CG.w, s: CG.s, q: CG.q, cf: CG.cf, sort: CG.sort, dir: CG.dir, ld: CG.ld, lcf: CG.lcf, mcf: CG.mcf, mk: CG.mk, msort: CG.msort, gsort: CG.gsort, gw: CG.gw, ak: CG.ak})); }catch(e){} }
 function cfBadge(c, n, sc){ return c === 1 ? '<span class="cfb c1" title="이 캐릭터로 확실히 이어 붙였습니다">확실</span>' : c === 2 ? `<span class="cfb c2" title="비슷한 캐릭터 — 확실하지 않아 이어 붙이지 않았습니다">유력${n > 1 ? ` · 후보 ${n}명` : ''}</span>` : ''; }
 const CK = ['닉네임 변경', '길드 변경', '월드 이전', '서버 이전'];
 async function changes(){ if(!D.chg) D.chg = getJSON('data/changes.json').then(trLegalize).catch(() => null); return D.chg; }
@@ -1183,7 +1183,22 @@ function trWinOf(W, kind, d0, d1, wa, wb){
     if(kind === 2 ? (w.world.includes(wa) && (!wb || w.world.includes(wb))) : w.server.includes(wa)) return w; }
   return null;
 }
+// v1.4.3: 예전 수집 데이터의 행방 불명(why 없음)은 구월드 17만 기준으로 화면에서 정리 (수집기 v1.4.3~ 는 수집기가 함)
+const OLD_LINE = 170000, OLD_WORLDS = ['울란', '디엔', '린드리스'];
+function goneLegacy(ch){
+  if(!ch || !Array.isArray(ch.gone) || ch.gone.some(x => x && x.why) || ch.gone_below != null) return ch;
+  let below = 0;
+  ch.gone = ch.gone.filter(x => {
+    const old = OLD_WORLDS.includes(wName(x.w));
+    if(old && (x.bp || 0) < OLD_LINE * 0.97){ below++; return false; }
+    x.why = old && (x.bp || 0) < OLD_LINE * 1.03 ? '기준선 근처' : '닉변·삭제 추정';
+    return true;
+  });
+  ch.gone_below = below; ch.gone_total = Math.max(0, (ch.gone_total || 0) - below);
+  return ch;
+}
 function trLegalize(ch){
+  goneLegacy(ch);
   if(!ch || ch.windows) return ch;      // 수집기가 이미 거른 데이터
   const W = trWins(null); let n = 0;
   const wn = v => typeof v === 'number' ? wName(v) : v;
@@ -1298,7 +1313,7 @@ const CGTABS = [['list', '변경 목록'], ['moved', '이전 추적'], ['ld', '�
 let CGTAB = lsGet('l9cgtab', 'list'); if(typeof CGTAB !== 'string') CGTAB = 'list';
 if(!CGTABS.some(t => t[0] === CGTAB)) CGTAB = 'list';
 function setCgTab(v){ CGTAB = v; lsSet('l9cgtab', v); }
-function cgResetFilters(){ Object.assign(CG, {per: 7, kind: -1, w: 0, s: 0, q: '', cf: 0, ld: '', lcf: 0, mcf: 0, mk: -1, msort: 'd', gsort: 'd', ak: ''}); cgResetMore(); saveCG(); }
+function cgResetFilters(){ Object.assign(CG, {per: 7, kind: -1, w: 0, s: 0, q: '', cf: 0, ld: '', lcf: 0, mcf: 0, mk: -1, msort: 'd', gsort: 'd', gw: '', ak: ''}); cgResetMore(); saveCG(); }
 function cgResetMore(){ CG.page = 0; CG.mv = 24; CG.asm = 24; CG.ldm = 24; CG.gom = 50; }
 const cgNote = (html, open) => `<details class="note cgnote" ${open ? 'open' : ''}><summary>이 화면 설명</summary><div>${html}</div></details>`;
 const cgMore = (act, n, unit) => n > 0 ? `<div class="pager"><button class="btn" data-act="${act}">더 보기 (${nf(n)}${unit} 남음)</button></div>` : '';
@@ -1315,8 +1330,10 @@ function launderData(ch, {inP, inWS, q}){
   ld.sort((a, b) => (LDLV[b.level] || 0) - (LDLV[a.level] || 0) || b.d - a.d || (b.score ?? -1) - (a.score ?? -1));
   let gone = (ch.gone || []).filter(x => (CG.per >= 999 || x.last >= ch.date - CG.per) && inWS(x.w, x.s));
   if(q) gone = gone.filter(x => (x.n || '').includes(q) || (x.g || '').includes(q));
+  const gc = {'기준선 근처': 0, '이전 기간': 0, '닉변·삭제 추정': 0}; for(const x of gone) if(x.why in gc) gc[x.why]++;
+  if(CG.gw) gone = gone.filter(x => x.why === CG.gw);
   gone.sort(CG.gsort === 'bp' ? (a, b) => (b.bp || 0) - (a.bp || 0) || b.last - a.last : (a, b) => b.last - a.last || (b.bp || 0) - (a.bp || 0));
-  return {ld, lc, gone};
+  return {ld, lc, gone, gc};
 }
 function ldTab(L, perLbl, ch){
   if(!L) return '<div class="empty" style="padding:14px 16px">예전 수집 데이터에는 이전 세탁 의심 기록이 없습니다</div>';
@@ -1347,12 +1364,16 @@ function ldTab(L, perLbl, ch){
 }
 function goneTab(L, ch){
   if(!L) return '<div class="empty" style="padding:14px 16px">예전 수집 데이터에는 행방 불명 기록이 없습니다</div>';
-  const {gone} = L;
-  return cgNote(`수집 대상에서 <b>사라졌지만 아직 이어 붙일 캐릭터를 찾지 못한</b> 캐릭터입니다. 사라진 뒤 <b>14일 동안</b> 같은 캐릭터를 계속 찾습니다. 캐릭터 삭제나 수집 기준(순위) 밖으로 밀려난 경우일 수도 있습니다.`)
-    + `<div class="ctrls"><span class="lbl">정렬</span>${seg('cg-gsort', CG.gsort, [['d', '마지막 확인 최근 순'], ['bp', '전투력 높은 순']])}</div>
+  const {gone, gc} = L;
+  const WHY = {'기준선 근처': 'c2', '이전 기간': 'c1', '닉변·삭제 추정': 'c3'};
+  return cgNote(`공식 사이트 목록(서버별 전투력 1,000위까지)에서 <b>이름이 사라졌는데 아직 이어 붙일 캐릭터를 찾지 못한</b> 캐릭터입니다. 사라진 뒤 <b>14일 동안</b> 같은 캐릭터를 계속 찾습니다.<br>
+      마지막 전투력이 <b>수집 기준 아래</b>(구월드 17만 · 신월드 서버 500위 컷의 97% 미만)였던 캐릭터는 매크로 · 저레벨 정리일 가능성이 커서 목록에서 뺐습니다${ch.gone_below ? ` (${nf(ch.gone_below)}명)` : ''}.<br>
+      <b class="cfb c2">기준선 근처</b> 1,000위 밖으로 밀려났을 수 있음 &nbsp; <b class="cfb c1">이전 기간</b> 이전 기간 중이라 옮긴 캐릭터일 수 있음 &nbsp; <b class="cfb c3">닉변·삭제 추정</b> 기준보다 충분히 높았는데 사라짐 — 닉네임을 바꿨거나 캐릭터를 지운 경우`)
+    + `<div class="ctrls"><span class="lbl">이유</span>${seg('cg-gw', CG.gw, [['', '전체'], ...Object.keys(gc).map(k => [k, `${k} ${nf(gc[k])}`])])}
+      <span class="lbl">정렬</span>${seg('cg-gsort', CG.gsort, [['d', '마지막 확인 최근 순'], ['bp', '전투력 높은 순']])}</div>
     <div class="sec">행방 불명 목록 <small>${nf(gone.length)}명${ch.gone_total > (ch.gone || []).length ? ` · 전체 ${nf(ch.gone_total)}명 중 최근 ${nf((ch.gone || []).length)}명만 보관` : ''}</small></div>
-    ${gone.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk gone"><tr><th>마지막 확인</th><th class="l">캐릭터</th><th class="cgws">월드</th><th class="cgws">서버</th><th class="l hide-s">길드</th><th class="hide-s">직업</th><th>전투력</th><th>대표 마스터리</th><th>전문화</th></tr>
-      ${gone.slice(0, CG.gom).map(x => `<tr><td class="dg" style="font-size:16px">${esc(dayStr(x.last).slice(5))}</td>
+    ${gone.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk gone"><tr><th>마지막 확인</th><th>이유</th><th class="l">캐릭터</th><th class="cgws">월드</th><th class="cgws">서버</th><th class="l hide-s">길드</th><th class="hide-s">직업</th><th>전투력</th><th>대표 마스터리</th><th>전문화</th></tr>
+      ${gone.slice(0, CG.gom).map(x => `<tr><td class="dg" style="font-size:16px">${esc(dayStr(x.last).slice(5))}</td><td>${x.why ? `<span class="cfb ${WHY[x.why] || 'c3'}">${esc(x.why)}</span>` : '<span class="sub">-</span>'}</td>
         <td class="l"><div class="nm">${esc(x.n)}</div><div class="sub msub">${esc(wName(x.w))} ${serverLabel(x.s)}${x.g ? ' · ' + esc(x.g) : ''}</div></td>
         <td class="cgws">${esc(wName(x.w))}</td><td class="cgws dg" style="font-size:16px">${x.s ? pad2(x.s) : '--'}</td>
         <td class="l hide-s">${x.g ? esc(x.g) : '<span class="sub">-</span>'}</td><td class="hide-s">${esc(x.j || '--')}</td>
@@ -1433,7 +1454,7 @@ async function pageChg(){
   const N = {list: view.length, moved: mv.length, ld: L ? L.ld.length : null, gone: L ? L.gone.length : null, assoc: as.length};
   const tabs = `<div class="trtabs cgtabs fr">${CGTABS.map(([v, l]) =>
     `<button class="${CGTAB === v ? 'on' : ''}" data-act="cg-tab" data-v="${v}">${l}<small>${N[v] == null ? '-' : nf(N[v]) + (v === 'list' || v === 'assoc' ? '건' : '명')}</small></button>`).join('')}</div>`;
-  const dirty = per !== 7 || CG.w || CG.q || CG.kind >= 0 || CG.cf || CG.ld || CG.lcf || CG.mcf || CG.mk >= 0 || CG.ak;
+  const dirty = per !== 7 || CG.w || CG.q || CG.kind >= 0 || CG.cf || CG.ld || CG.lcf || CG.mcf || CG.mk >= 0 || CG.ak || CG.gw;
   const head = `<div class="bar"><span class="sid g">변경 이력 · ${esc((CGTABS.find(t => t[0] === CGTAB) || CGTABS[0])[1])}</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">기준일 ${esc(D.meta.date)} · ${critText()}</span></div>
     <div class="ctrls cgcom"><span class="lbl">기간</span>${seg('cg-per', per, [[1, '최근 수집일'], [7, '7일'], [30, '30일'], [999, '전체']])}
       <span class="lbl">월드</span><select data-ch="cg-w"><option value="0">전체</option>${ws.map(w => `<option value="${esc(w.code)}" ${w.code === CG.w ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select>
@@ -1719,7 +1740,7 @@ function pageHelp(){
       <tr><td>전투력</td><td>−5% ~ +10%</td></tr></table>
     <ul><li><b>확실</b>: 위 항목이 모두 맞는 캐릭터가 <b>한 명뿐</b>일 때(또는 같은 서버 · 같은 길드에서 닉네임만 바뀐 경우) 같은 캐릭터로 이어 붙입니다. 이름 · 월드 · 서버가 모두 바뀌어도 찾습니다. 추적 · 메모도 새 이름으로 자동으로 옮겨집니다.</li>
       <li><b>유력</b>: 맞는 후보가 여럿이거나 일부 값이 조금 다를 때는 단정하지 않고 [변경 이력]에 유력으로만 표시합니다. 추적 중인 캐릭터라면 [추적] 화면에 후보가 나오고 [이 캐릭터로 바꾸기]로 직접 옮길 수 있습니다.</li>
-      <li>사라진 뒤 <b>14일 안</b>에 다시 나타나면 이어 붙입니다. 옮긴 곳에서 수집 기준(구월드 14만 · 신월드 500위) 밖이면 기준 안으로 들어온 날 찾습니다.</li></ul>`)
+      <li>사라진 뒤 <b>14일 안</b>에 다시 나타나면 이어 붙입니다. 옮긴 곳에서 수집 기준(구월드 17만 · 신월드 500위) 밖이면 기준 안으로 들어온 날 찾습니다.</li></ul>`)
   + sec('월드 · 서버 이전 세탁 추적', `
     <p>월드 · 서버를 옮기면서 닉네임 · 길드 · 의상까지 바꿔 다른 캐릭터처럼 보이게 하는 경우(세탁)를 찾아 [변경 이력]의 <b>이전 세탁 의심</b>에 보여줍니다.</p>
     <ul><li>위 비교 항목에 더해 <b>의상(코스튬)</b> 정보도 비교합니다.</li>
@@ -2436,6 +2457,7 @@ document.addEventListener('click', async ev => {
     else if(act === 'cg-mcf'){ CG.mcf = Number(b.dataset.v); CG.mv = 24; saveCG(); await render(); }
     else if(act === 'cg-mk'){ CG.mk = Number(b.dataset.v); CG.mv = 24; saveCG(); await render(); }
     else if(act === 'cg-msort'){ CG.msort = b.dataset.v; CG.mv = 24; saveCG(); await render(); }
+    else if(act === 'cg-gw'){ CG.gw = b.dataset.v; CG.gom = 50; saveCG(); await render(); }
     else if(act === 'cg-gsort'){ CG.gsort = b.dataset.v; CG.gom = 50; saveCG(); await render(); }
     else if(act === 'cg-ak'){ CG.ak = b.dataset.v; CG.asm = 24; saveCG(); await render(); }
     else if(act === 'rk-page'){ RK.page = Math.max(0, Number(b.dataset.p)); await render(); window.scrollTo({top: $('#main').offsetTop - 10}); }
