@@ -4,7 +4,7 @@
 
 공식 캐릭터 정보(l9.onstove.com)에서 검색 가능한 캐릭터(서버별 전투력 1,000위 안) 중
 수집 기준(WORLD_RULES)에 맞는 캐릭터를 월드별로 조회해 웹 화면이 읽는 JSON 파일을 만든다.
-  구월드(울란·디엔·린드리스): 전투력 14만 이상 / 신월드(가르바나·디나페리·하칸): 서버별 전투력 상위 500위
+  구월드(울란·디엔·린드리스): 전투력 17만 이상 (2026-11-17 14만 → 17만 상향: 그 아래는 대부분 매크로) / 신월드(가르바나·디나페리·하칸): 서버별 전투력 상위 500위
   사이트 목록은 전투력 순이 아니라 이름 순이라, 전날 값으로 조회할 캐릭터를 미리 고르고
   기준 밖 캐릭터는 skip/<월드>.json 에 적어 두었다가 7일에 한 번씩 다시 확인한다.
 
@@ -64,7 +64,7 @@ MASTERIES = [
 ]
 # 월드별 캐릭터 파일 열 순서 (화면 app.js 와 같아야 함)
 # 월드별 수집 기준: ("bp", 최소 전투력) 또는 ("top", 서버별 상위 N위). 목록에 없는 월드는 전부 수집.
-WORLD_RULES = {"울란": ("bp", 140000), "디엔": ("bp", 140000), "린드리스": ("bp", 140000),
+WORLD_RULES = {"울란": ("bp", 170000), "디엔": ("bp", 170000), "린드리스": ("bp", 170000),
                "가르바나": ("top", 500), "디나페리": ("top", 500), "하칸": ("top", 500)}
 RULE_MARGIN = 0.97        # 기준보다 3% 낮은 캐릭터까지 매일 조회 (기준을 막 넘는 캐릭터를 놓치지 않도록)
 RECHECK_DAYS = 7          # 기준 밖 캐릭터는 7일에 한 번 다시 조회
@@ -1233,10 +1233,36 @@ def build_launder(hist, cur, mcodes, today, wname, moves, hidden=frozenset(), le
 GONE_MAX = 3000
 
 
-def build_gone(hist, cur, mcodes, today, alive, jobs):
+GONE_NEAR = 1.03         # 마지막 전투력이 수집 기준선의 3% 안이면 '기준선 근처(밀려남 가능)'
+
+
+def gone_lines(cur, wname):
+    """월드 · 서버별 수집 기준선: 구월드는 최소 전투력, 신월드(서버별 상위 N위)는 오늘 그 서버에서 수집된 캐릭터의 최저 전투력(=N위 컷)"""
+    cut = {}
+    for c in cur.values():
+        r = rule_of(wname.get(c["w"], ""))
+        if r and r[0] == "top":
+            k = (c["w"], c["s"])
+            if c["bp"] and (k not in cut or c["bp"] < cut[k]):
+                cut[k] = c["bp"]
+
+    def line(w, s):
+        r = rule_of(wname.get(w, ""))
+        if not r:
+            return 0
+        if r[0] == "bp":
+            return r[1]
+        return cut.get((w, s), 0)
+    return line
+
+
+def build_gone(hist, cur, mcodes, today, alive, jobs, wname=None, tr=None):
     """사라졌고 아직 (확실히) 연결되지 않은 캐릭터: 오늘 수집한 월드의 사이트 목록에 이름이 없고 마지막 기록이 LINK_DAYS일 안.
-    이전 · 닉변 후 아직 못 찾은 캐릭터 외에 삭제된 캐릭터, 사이트 목록(서버별 전투력 1,000위) 밖으로 밀려난 캐릭터도 섞여 있음."""
-    out = []
+    이전 · 닉변 후 아직 못 찾은 캐릭터 외에 삭제된 캐릭터, 사이트 목록(서버별 전투력 1,000위) 밖으로 밀려난 캐릭터도 섞여 있음.
+    v1.4.3: 마지막 전투력이 수집 기준선 x RULE_MARGIN 아래였던 캐릭터는 수집 대상이 아니었으므로 빼고(건수만 셈),
+    남은 캐릭터에는 이유(why)를 붙임 — 기준선 근처 / 이전 기간 / 닉변 · 삭제 추정."""
+    line = gone_lines(cur, wname or {})
+    out, below = [], 0
     for k, h in hist.items():
         if k in cur or not h.get("p"):
             continue
@@ -1247,12 +1273,23 @@ def build_gone(hist, cur, mcodes, today, alive, jobs):
         lp = h["p"][-1]
         if lp[0] < today - LINK_DAYS:
             continue
+        ln = line(w, h.get("s") or 0)
+        bp = lp[1] or 0
+        if ln and bp < ln * RULE_MARGIN:
+            below += 1          # 기준 밖 캐릭터(예: 17만 미만 · 서버 500위 밖)가 사이트 목록에서 사라진 것 — 행방 불명으로 세지 않음
+            continue
+        if ln and bp < ln * GONE_NEAR:
+            why = "기준선 근처"
+        elif tr is not None and tr.active(lp[0], today):
+            why = "이전 기간"
+        else:
+            why = "닉변·삭제 추정"
         j = h.get("j")
-        out.append({"w": w, "s": h.get("s") or 0, "n": n, "g": h.get("g") or "",
+        out.append({"why": why, "w": w, "s": h.get("s") or 0, "n": n, "g": h.get("g") or "",
                     "j": jobs[j] if isinstance(j, int) and 0 <= j < len(jobs) else (j if isinstance(j, str) else ""),
                     "bp": lp[1], "ml": lp[3], "mc": _mcode(mcodes, lp[6]), "sp": lp[5], "ach": lp[2], "last": lp[0]})
     out.sort(key=lambda e: (-e["last"], -(e["bp"] or 0)))
-    return out
+    return out, below
 
 
 def legal_move(legal, m):
@@ -1363,11 +1400,11 @@ def build_changes(hist, cur, mcodes, today, wname, moves=(), alive=None, jobs=()
     lst.sort(key=lambda x: (-x[0], x[1]))
     moved.sort(key=lambda x: -x["last"])
     assoc.sort(key=lambda x: -x["d"])
-    gone = build_gone(hist, cur, mcodes, today, alive or {}, jobs or [])
+    gone, gone_below = build_gone(hist, cur, mcodes, today, alive or {}, jobs or [], wname, tr)
     return {"date": today, "days": CHANGE_DAYS, "kinds": CHANGE_KINDS, "list": lst[:CHANGE_MAX], "moved": moved[:3000],
             "names": names, "assoc": assoc[:2000],
             "launder": build_launder(hist, cur, mcodes, today, wname, moves, hidden, legal),
-            "gone": gone[:GONE_MAX], "gone_total": len(gone),
+            "gone": gone[:GONE_MAX], "gone_total": len(gone), "gone_below": gone_below,
             "windows": (tr.windows if tr else [])[:12], "illegal": n_ill,
             "trinfo": dict((tr.info if tr else {}), active=bool(tr and tr.active(today - LINK_DAYS, today)))}
 
