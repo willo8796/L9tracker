@@ -371,9 +371,12 @@ def link_gate(old, new, gap):
     ob, nb = old.get("bp") or 0, new.get("bp") or 0
     if ob and nb and (nb < ob * LG_BP_LOW or nb > ob * (1 + LG_BP_HIGH + 0.01 * gap)):
         return None
+    # 무기 레벨: 같은 무기 레벨이 그대로 이어지면 좋지만, 마스터리 체인지(상점 상품, 2026-11 업데이트 예정)로
+    # 무기끼리 레벨을 바꿀 수 있으므로 무기별로 안 맞으면 '레벨 묶음'(작은 순 정렬)이 줄지 않았는지로 다시 봄
     ow, nw = old.get("wl") or {}, new.get("wl") or {}
-    for c, lv in ow.items():
-        if c in nw and (nw[c] < lv or nw[c] > lv + 2 + gap):
+    if any(c in nw and (nw[c] < lv or nw[c] > lv + 2 + gap) for c, lv in ow.items()):
+        a, b = sorted(ow.values()), sorted(nw.values())
+        if len(a) == len(b) and any(y < x or y > x + 2 + gap for x, y in zip(a, b)):
             return None
     return {"ach": bool(oa and na)}
 
@@ -390,7 +393,11 @@ def link_score(old, new, gap):
         sc -= min(abs(math.log(nb / ob)) / 0.02, 20)   # 장비 교체로 크게 떨어지기도 해 비중을 낮춤
     ow, nw = old.get("wl") or {}, new.get("wl") or {}
     common = [c for c in ow if c in nw]
-    sc += len(common) - sum(nw[c] - ow[c] for c in common) / 2
+    if any(nw[c] < ow[c] for c in common):     # 마스터리 체인지로 레벨이 옮겨진 경우: 레벨 묶음으로 비교
+        a, b = sorted(ow.values()), sorted(nw.values())
+        sc -= sum(abs(y - x) for x, y in zip(a, b)) / 2 + 1
+    else:
+        sc += len(common) - sum(nw[c] - ow[c] for c in common) / 2
     if old.get("mc") is not None and old.get("mc") == new.get("mc"):
         sc += 2
     if isinstance(old.get("sp"), int) and isinstance(new.get("sp"), int):
@@ -408,8 +415,7 @@ def clearly_other(old, new, gap):
     os_, ns = old.get("sp"), new.get("sp")
     if isinstance(os_, int) and isinstance(ns, int) and ns <= os_ - 2:
         return True
-    ow, nw = old.get("wl") or {}, new.get("wl") or {}
-    return any(c in nw and nw[c] <= lv - 2 for c, lv in ow.items())
+    return False    # 무기 레벨 감소는 마스터리 체인지로 생길 수 있어 다른 캐릭터의 근거로 쓰지 않음
 
 
 def name_norm(n):
