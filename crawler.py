@@ -23,6 +23,8 @@
   watch.json           감시 캐릭터 {"월드|닉네임": 감시 끝 날짜번호} — 이전·닉변 직후 30일간 기준 밖이어도 계속 수집
 """
 import os
+import math
+import bisect
 import sys
 import json
 import time
@@ -322,6 +324,92 @@ def fingerprint(old, new, gap):
         if isinstance(x, int) and isinstance(y, int) and (y - x < 0 or y - x > up):
             return None
     return {"full": full, "score": match_score(old, new)}
+
+
+# ------------------------------------------------------------------ v1.5.0 같은 캐릭터 판정 (직업 제외)
+# 로드나인은 무기 · 직업(어빌리티)을 언제든 자유롭게 바꿀 수 있고, 계정 매매로 주인 · 닉네임도 바뀐다 → 직업은 판정에 쓰지 않음.
+# 가르바나 실측(2026-11-15 → 11-17, 전투력 20만 이상 371명, 이름 그대로인 캐릭터):
+#   직업 16% 변경 · 서버 100% 유지 · 업적점수 · 전문화 · 무기별 마스터리 레벨이 줄어든 캐릭터 0명
+#   업적점수 증가 중앙값 +0.2% / 최대 +1.9% (2일), 전문화 +0~4, 전투력 대부분 ±1.5% 이나 5~10% 가 10% 넘게 하락(최대 -34%)
+# 아래 조건(LINK_GATE)으로 371명 중 370명이 자기 자신만 찾음(놓친 1명은 업적점수 0), 다른 캐릭터와 겹친 4명(1.1%)은 점수 1등이 모두 본인.
+LG_ACH_DAY = 0.01        # 업적점수: 하루 +1% 까지
+LG_ACH_DOWN = 0.001      # 업적점수: 반올림 등으로 0.1% 까지는 줄어도 인정
+LG_SP_DAY = 2            # 전문화: 하루 +2 까지 (감소 불가)
+LG_BP_LOW = 0.60         # 전투력: 예전의 60% 까지 하락 인정 (장비 교체)
+LG_BP_HIGH = 0.05        # 전투력: +5% + 하루 1%
+LG_SURE_GAP = 8.0        # 후보가 여럿일 때 1등이 2등보다 이만큼 높으면 확실
+LG_SURE_MIN = -16.0      # 후보가 한 명뿐이어도 점수가 이보다 낮으면(수치 차이가 큼) 확실 대신 유력 — 우연히 한 명만 맞은 다른 캐릭터 방지
+
+
+def weapon_levels(m):
+    """[대표 무기, 레벨, 무기1, 레벨1, 무기2, 레벨2] → {무기 번호: 가장 높은 레벨}"""
+    out = {}
+    if not m:
+        return out
+    for i in (0, 2, 4):
+        if i + 1 < len(m):
+            c, lv = m[i], m[i + 1]
+            if isinstance(c, int) and c >= 0 and isinstance(lv, int) and lv > 1:
+                out[c] = max(out.get(c, 0), lv)
+    return out
+
+
+def link_gate(old, new, gap):
+    """같은 캐릭터일 수 있는지 (직업은 보지 않음). old/new: dict(bp, ach, sp, wl={무기: 레벨}).
+    → None(불가) 또는 {'ach': 업적점수로 비교했는지}"""
+    gap = max(1, gap)
+    oa, na = old.get("ach") or 0, new.get("ach") or 0
+    if oa and na:
+        r = (na - oa) / oa
+        if r < -LG_ACH_DOWN or r > LG_ACH_DAY * gap:
+            return None
+    elif oa or na:
+        return None             # 한쪽만 업적점수가 있으면 다른 캐릭터
+    os_, ns = old.get("sp"), new.get("sp")
+    if isinstance(os_, int) and isinstance(ns, int) and (ns < os_ or ns > os_ + LG_SP_DAY * gap):
+        return None
+    ob, nb = old.get("bp") or 0, new.get("bp") or 0
+    if ob and nb and (nb < ob * LG_BP_LOW or nb > ob * (1 + LG_BP_HIGH + 0.01 * gap)):
+        return None
+    ow, nw = old.get("wl") or {}, new.get("wl") or {}
+    for c, lv in ow.items():
+        if c in nw and (nw[c] < lv or nw[c] > lv + 2 + gap):
+            return None
+    return {"ach": bool(oa and na)}
+
+
+def link_score(old, new, gap):
+    """후보가 여럿일 때 순위: 업적 증가가 전형값(하루 0.1%)에 가까울수록 · 전투력 변화가 작을수록 · 같은 무기가 많을수록 높음"""
+    gap = max(1, gap)
+    sc = 0.0
+    oa, na = old.get("ach") or 0, new.get("ach") or 0
+    if oa and na:
+        sc -= min(abs(math.log(na / oa) - 0.001 * gap) / (0.003 * math.sqrt(gap)), 30)
+    ob, nb = old.get("bp") or 0, new.get("bp") or 0
+    if ob and nb:
+        sc -= min(abs(math.log(nb / ob)) / 0.02, 20)   # 장비 교체로 크게 떨어지기도 해 비중을 낮춤
+    ow, nw = old.get("wl") or {}, new.get("wl") or {}
+    common = [c for c in ow if c in nw]
+    sc += len(common) - sum(nw[c] - ow[c] for c in common) / 2
+    if old.get("mc") is not None and old.get("mc") == new.get("mc"):
+        sc += 2
+    if isinstance(old.get("sp"), int) and isinstance(new.get("sp"), int):
+        sc -= (new["sp"] - old["sp"]) / 2
+    return round(sc, 2)
+
+
+def clearly_other(old, new, gap):
+    """같은 이름인데 수치가 확실히 맞지 않음 → 다른 캐릭터가 이 이름을 쓰게 됨(이름 넘겨받기 · 계정 매매 등).
+    기록을 잘못 나누면 안 되므로 넉넉하게: 업적점수 0.5% 넘게 감소 또는 5%+하루 1% 넘게 증가, 전문화 2 이상 감소, 같은 무기 레벨 2 이상 감소."""
+    gap = max(1, gap)
+    oa, na = old.get("ach") or 0, new.get("ach") or 0
+    if oa and na and (na < oa * 0.995 or na > oa * (1.05 + 0.01 * gap)):
+        return True
+    os_, ns = old.get("sp"), new.get("sp")
+    if isinstance(os_, int) and isinstance(ns, int) and ns <= os_ - 2:
+        return True
+    ow, nw = old.get("wl") or {}, new.get("wl") or {}
+    return any(c in nw and nw[c] <= lv - 2 for c, lv in ow.items())
 
 
 def name_norm(n):
@@ -741,18 +829,7 @@ class Builder:
         # 사라진 캐릭터 → 새로 나타난 캐릭터 연결 (닉네임 변경 · 월드 이전 · 서버 이전). 이번에 수집한 월드만 대상.
         #  확실: 아래 규칙으로 한 명만 맞을 때 → 기록을 이어 붙이고 추적 · 즐겨찾기도 따라감
         #  유력: 비슷하지만 단정할 수 없을 때(후보 여러 명 · 마스터리 정보 부족 등) → 변경 이력에 '유력'으로만 표시
-        gone = [k for k, h in hist.items() if k not in cur and int(k.split("|", 1)[0]) in done_w
-                and h["p"] and h["p"][-1][0] >= today - LINK_DAYS
-                and k.split("|", 1)[1] not in self.alive.get(int(k.split("|", 1)[0]), ())]
-        new = [k for k in cur if k not in hist]
-        # 후보 = 새로 나타난 캐릭터 + 기준 밖에서 처음 보인 캐릭터(extra). extra 는 연결될 때만 오늘 기록에 넣음
-        extra = {k: c for k, c in self.extra.items() if k not in cur and k not in hist and c["w"] in done_w}
-        cand = dict(extra)
-        cand.update(cur)
-        by_job = {}
-        for k in new + list(extra):
-            by_job.setdefault(cand[k]["j"], []).append(k)
-
+        tr, act = self.tr, None
         def take(nk):        # 연결된 후보가 기준 밖(extra)이면 오늘 기록 대상에 넣고 True
             if nk in extra:
                 cur[nk] = extra[nk]
@@ -761,14 +838,16 @@ class Builder:
             return False
 
         def old_fp(h):
-            lp = h["p"][-1]
+            lp = list(h["p"][-1]) + [None] * 7      # 예전 형태(필드가 적은) 기록도 견딤
             m = h.get("m") or [lp[6], lp[3]]
-            return {"j": h["j"], "bp": lp[1], "ach": lp[2], "sp": lp[5], "ml": lp[3], "lv": m_levels(m)}
+            return {"j": h.get("j"), "bp": lp[1], "ach": lp[2], "sp": lp[5], "ml": lp[3], "lv": m_levels(m),
+                    "wl": weapon_levels(m), "mc": m[0] if m else None}
 
         def new_fp(c):
-            return {"j": c["j"], "bp": c["bp"], "ach": c["ach"], "sp": c["sp"], "ml": c["ml"], "lv": m_levels(c["m"])}
+            return {"j": c["j"], "bp": c["bp"], "ach": c["ach"], "sp": c["sp"], "ml": c["ml"], "lv": m_levels(c["m"]),
+                    "wl": weapon_levels(c["m"]), "mc": c.get("mc")}
 
-        tr, blocked = self.tr, {"n": 0}
+        blocked = {"n": 0}
         act = tr.active(today - LINK_DAYS, today)
         log(f"이전 기간({act['s'][5:]}~{act['e'][5:]}) 반영 — 월드 · 서버 이전과 세탁 의심까지 확인" if act
             else "평시(최근 이전 기간 없음) — 닉네임 변경만 확인 (월드 · 서버가 다른 캐릭터와는 잇지 않음)")
@@ -787,50 +866,119 @@ class Builder:
                 blocked.setdefault("k", set()).add(gk)
             return ok
 
-        pairs, fps = [], {}
+
+        # (v1.5.0) 이름 넘겨받기 감지: 같은 이름인데 수치가 확실히 다른 캐릭터(업적점수 · 전문화 · 무기 레벨이 줄어듦 등)이거나
+        # 이전 기간이 아닌데 서버가 바뀜 → 다른 캐릭터가 이 이름을 쓰게 된 것(닉네임 맞바꾸기 · 계정 매매 후 이름 변경).
+        # 예전 기록은 'name(예전)' 으로 떼어 내 사라진 캐릭터로 다루고(새 이름을 찾아 이어 붙임), 지금 캐릭터는 새로 나타난 캐릭터로 다룸.
+        sv_odd = {}
+        for k, c in cur.items():
+            h = hist.get(k)
+            if h is not None and h.get("p") and h.get("s") and c["s"] and h["s"] != c["s"] \
+                    and not tr.ok("server", h["p"][-1][0], today, wname.get(c["w"], c["w"])):
+                sv_odd.setdefault(c["w"], set()).add(k)
+        sv_mass = {w for w, ks in sv_odd.items() if len(ks) > SV_MASS}
+        for w in sv_mass:
+            log(f"주의: {wname.get(w, w)} 에서 이전 기간이 아닌데 서버가 바뀐 캐릭터가 {len(sv_odd[w])}명 — 서버 통합 · 공지 누락일 수 있어 기록은 그대로 이어가고 서버 이전으로만 남기지 않음")
+        n_split = 0
+        for k, c in list(cur.items()):
+            h = hist.get(k)
+            if h is None or not h.get("p") or h["p"][-1][0] >= today:
+                continue
+            try:
+                o, nf, gap = old_fp(h), new_fp(c), today - h["p"][-1][0]
+                if k in sv_odd.get(c["w"], ()) and c["w"] not in sv_mass:
+                    split = not link_gate(o, nf, gap)          # 서버가 바뀌었는데 수치도 이어지지 않음
+                else:
+                    split = clearly_other(o, nf, gap)
+            except (IndexError, KeyError, TypeError, ValueError):
+                split = False       # 비교할 수 없으면 기록을 나누지 않음
+            if not split:
+                continue
+            w, n = k.split("|", 1)
+            ok, i = f"{w}|{n}(예전)", 2
+            while ok in hist or ok in cur:
+                ok, i = f"{w}|{n}(예전{i})", i + 1
+            hist[ok] = hist.pop(k)
+            hist[ok]["on"] = h.get("on") or n
+            if k in self.watch:
+                self.watch[ok] = self.watch[k]
+            n_split += 1
+        if n_split:
+            log(f"같은 이름의 다른 캐릭터 {n_split}명 — 예전 기록은 '(예전)' 으로 떼어 내 새 이름을 찾음")
+
+        gone = [k for k, h in hist.items() if k not in cur and int(k.split("|", 1)[0]) in done_w
+                and h["p"] and h["p"][-1][0] >= today - LINK_DAYS
+                and k.split("|", 1)[1] not in self.alive.get(int(k.split("|", 1)[0]), ())]
+        new = [k for k in cur if k not in hist]
+        # 후보 = 새로 나타난 캐릭터 + 기준 밖에서 처음 보인 캐릭터(extra). extra 는 연결될 때만 오늘 기록에 넣음
+        extra = {k: c for k, c in self.extra.items() if k not in cur and k not in hist and c["w"] in done_w}
+        cand = dict(extra)
+        cand.update(cur)
+        # 업적점수 순으로 정렬해 두고 범위로 찾음 (모든 월드 · 직업 상관없이)
+        ck = sorted(new + list(extra), key=lambda k: cand[k]["ach"] or 0)
+        cach = [cand[k]["ach"] or 0 for k in ck]
+        nfp = {}
+
+        def nf(nk):
+            if nk not in nfp:
+                nfp[nk] = new_fp(cand[nk])
+            return nfp[nk]
+
+        # 사라진 캐릭터마다 조건(link_gate)을 통과한 후보와 점수
+        cands = {}      # gk → [(점수, nk, 업적점수로 비교했는지)]
         for gk in gone:
             h = hist[gk]
             lp = h["p"][-1]
-            old = old_fp(h)
-            gap = today - lp[0]
-            gw, gn = gk.split("|", 1)
-            for nk in by_job.get(h["j"], []):
+            o = old_fp(h)
+            gap = max(1, today - lp[0])
+            gn = h.get("on") or gk.split("|", 1)[1]
+            oa = o["ach"] or 0
+            if oa:
+                lo, hi = bisect.bisect_left(cach, oa * (1 - LG_ACH_DOWN) - 1e-9), bisect.bisect_right(cach, oa * (1 + LG_ACH_DAY * gap) + 1e-9)
+            else:
+                lo, hi = 0, bisect.bisect_right(cach, 0)
+            l = []
+            for nk in ck[lo:hi]:
                 c = cand[nk]
-                if not move_ok(gk, h, c):
-                    continue        # 이전 기간이 아닌데 월드 · 서버가 다름 → 같은 캐릭터일 수 없음
-                sc = match_score(old, c)
-                fp = fingerprint(old, new_fp(c), gap)
-                if fp:
-                    fps.setdefault(gk, []).append((fp, nk))
-                if not sc:
+                g = link_gate(o, nf(nk), gap)
+                if not g or not move_ok(gk, h, c):
                     continue
-                related = name_related(gn, c["n"])
-                if related and c["w"] != int(gw):
-                    ok = sc >= 80            # 월드 이전 (닉네임 같거나 번호 붙음)
-                else:                        # 같은 월드 닉네임 변경: 엄격하게
-                    same_g = bool(h.get("g")) and h.get("g") == c["g"]
-                    no_g = not h.get("g") and not c["g"]
-                    ach_ok = lp[2] and abs(c["ach"] - lp[2]) / lp[2] <= 0.004
-                    same_s = int(gw) == c["w"] and h.get("s") == c["s"]
-                    ok = sc >= 95 and ach_ok and same_s and (same_g or related or (no_g and sc >= 97))
-                if ok:
-                    pairs.append((sc + (5 if related else 0), gk, nk, sc, "이름·수치"))
-        # 지문 비교(마스터리 3종까지 모두 맞음)로 한 명만 맞으면 이름 · 월드 · 서버가 모두 바뀌어도 확실로 연결
-        cand_of_new = {}
-        for gk, l in fps.items():
-            for fp, nk in l:
-                cand_of_new.setdefault(nk, set()).add(gk)
-        for gk, l in fps.items():
-            if len(l) == 1 and l[0][0]["full"] and len(cand_of_new[l[0][1]]) == 1:
-                pairs.append((l[0][0]["score"] + 3, gk, l[0][1], l[0][0]["score"], "지문"))
-            elif len(l) > 1 and hist[gk].get("av"):
-                # 후보가 여럿이면 의상(avatar)으로 한 번 더: 마스터리 3종 일치 + 같은 의상이 딱 한 명이고, 그 후보를
-                # 같은 의상의 다른 사라진 캐릭터가 노리지 않을 때만 확실. 의상은 여러 사람이 같이 입으므로 의상만으로는 연결하지 않음
-                av = hist[gk]["av"]
-                hit = [(fp, nk) for fp, nk in l if fp["full"] and cand[nk].get("av") == av]
-                if len(hit) == 1 and not any(g2 != gk and hist[g2].get("av") == av and any(n2 == hit[0][1] and f2["full"] for f2, n2 in fps[g2])
-                                             for g2 in cand_of_new[hit[0][1]]):
-                    pairs.append((hit[0][0]["score"] + 2, gk, hit[0][1], hit[0][0]["score"], "지문+의상"))
+                sc = raw = link_score(o, nf(nk), gap)
+                if h.get("g") and h.get("g") == c["g"]:
+                    sc += 3
+                if name_related(gn, c["n"]):
+                    sc += 3
+                if h.get("av") and h.get("av") == c.get("av"):
+                    sc += 1
+                l.append((sc, nk, g["ach"] and raw > LG_SURE_MIN))   # 수치만의 점수(보너스 제외)가 낮으면 확실 불가
+            if l:
+                l.sort(key=lambda x: -x[0])
+                cands[gk] = l
+        rev = {}        # nk → [(점수, gk)]
+        for gk, l in cands.items():
+            for sc, nk, _ in l:
+                rev.setdefault(nk, []).append((sc, gk))
+        for v in rev.values():
+            v.sort(key=lambda x: -x[0])
+
+        def pct(sc):
+            return round(max(1.0, min(100.0, 100 + sc * 1.5)), 1)
+
+        # 확실: 업적점수로 비교했고, 서로 유일한 후보이거나 서로 1등이며 2등과 점수 차이가 LG_SURE_GAP 이상
+        pairs = []
+        for gk, l in cands.items():
+            sc, nk, by_ach = l[0]
+            if not by_ach:
+                continue        # 업적점수 0 이거나 수치 차이가 큼 → 유력만
+            r = rev[nk]
+            if r[0][1] != gk:
+                continue
+            m1 = l[0][0] - l[1][0] if len(l) > 1 else 99
+            m2 = r[0][0] - r[1][0] if len(r) > 1 else 99
+            if len(l) == 1 and len(r) == 1:
+                pairs.append((sc + 100, gk, nk, pct(sc), "지문"))
+            elif min(m1, m2) >= LG_SURE_GAP:
+                pairs.append((sc + 50, gk, nk, pct(sc), "지문+점수"))
         pairs.sort(reverse=True)
         used_g, used_n = set(), set()
         renamed = []
@@ -840,7 +988,8 @@ class Builder:
             used_g.add(gk)
             used_n.add(nk)
             h = hist.pop(gk)
-            gw, gn = gk.split("|", 1)
+            gw = gk.split("|", 1)[0]
+            gn = h.pop("on", None) or gk.split("|", 1)[1]
             c = cand[nk]
             out = take(nk)
             if int(gw) != c["w"]:
@@ -858,41 +1007,30 @@ class Builder:
             moves.append(mv)
             if gk in self.watch:     # 감시 중이던 캐릭터는 새 이름으로 감시 이어감
                 self.watch[nk] = max(self.watch.pop(gk), self.watch.get(nk, 0))
-        # 유력: 연결하지 못한 사라진 캐릭터의 후보
+        # 유력: 연결하지 못한 사라진 캐릭터의 후보 (점수 상위 3명). 기준 밖(extra) 후보는 후보가 3명 이하일 때만
         seen_pair = {(tuple(m["from"]), tuple(m["to"])) for m in moves}
         likely = 0
-        for gk in gone:
+        for gk, l in cands.items():
             if gk in used_g:
                 continue
             h = hist[gk]
-            gw, gn = gk.split("|", 1)
-            # 기준 밖(extra) 후보는 확실할 때만 씀 — 유력은 다른 캐릭터일 때가 많아 30일 감시로 엉뚱한 캐릭터가 쌓이지 않도록
-            l = [(fp, nk) for fp, nk in fps.get(gk, []) if nk not in used_n and nk not in extra]
-            if not l:     # 지문은 안 맞지만 수치가 아주 비슷한 다른 월드 · 서버 캐릭터
-                old, lp = old_fp(h), h["p"][-1]
-                for nk in by_job.get(h["j"], []):
-                    if nk in extra:
-                        continue
-                    c = cand[nk]
-                    if nk in used_n or (c["w"] == int(gw) and c["s"] == h.get("s")):
-                        continue
-                    if not move_ok(gk, h, c):
-                        continue
-                    sc = match_score(old, c)
-                    dml = (c["ml"] - old["ml"]) if isinstance(c["ml"], int) and isinstance(old["ml"], int) else 0
-                    if sc >= 92 and lp[2] and -0.001 <= (c["ach"] - lp[2]) / lp[2] <= 0.005 and 0 <= dml <= 1:
-                        l.append(({"full": False, "score": sc}, nk))
-            l.sort(key=lambda x: -x[0]["score"])
-            for fp, nk in l[:3]:
+            gw = gk.split("|", 1)[0]
+            gn = h.get("on") or gk.split("|", 1)[1]
+            l = [x for x in l if x[1] not in used_n]
+            if len(l) > 3:
+                l = [x for x in l if x[1] not in extra]
+            for sc, nk, by_ach in l[:3]:
                 c = cand[nk]
                 if ((int(gw), gn), (c["w"], c["n"])) in seen_pair:
                     continue
                 likely += 1
-                mv = {"d": today, "from": [int(gw), gn], "to": [c["w"], c["n"]], "score": fp["score"], "lv": "유력",
-                      "n": len(l), "how": "지문" if fp["full"] else "수치",
+                mv = {"d": today, "from": [int(gw), gn], "to": [c["w"], c["n"]], "score": pct(sc), "lv": "유력",
+                      "n": len(l), "how": "지문" if by_ach else "수치",
                       "fs": [h.get("s") or 0, h.get("g") or ""], "ts": [c["s"], c["g"] or ""]}
                 if h.get("av") and c.get("av") and h["av"] != c["av"]:
                     mv["av"] = 1
+                if nk in extra:
+                    mv["out"] = True
                 moves.append(mv)
         if blocked.get("k"):
             log(f"이전 기간이 아닌데 월드 · 서버가 다른 후보만 있던 사라진 캐릭터 {len(blocked['k'])}명 — 그 후보와는 연결하지 않음")
@@ -961,25 +1099,14 @@ class Builder:
                 log(f"연관 닉네임 추정 {na}건 (참고용)")
 
         n_sv_skip = n_sv_other = 0
-        sv_odd = {}
-        for k, c in cur.items():
-            h = hist.get(k)
-            if h is not None and h.get("p") and h.get("s") and c["s"] and h["s"] != c["s"] \
-                    and not any(e[0] == today and e[1] == "월드 이전" for e in h.get("e") or ()) \
-                    and not tr.ok("server", h["p"][-1][0], today, wname.get(c["w"], c["w"])):
-                sv_odd.setdefault(c["w"], set()).add(k)
-        sv_mass = {w for w, ks in sv_odd.items() if len(ks) > SV_MASS}
-        for w in sv_mass:
-            log(f"주의: {wname.get(w, w)} 에서 이전 기간이 아닌데 서버가 바뀐 캐릭터가 {len(sv_odd[w])}명 — 서버 통합 · 공지 누락일 수 있어 기록은 그대로 이어가고 서버 이전으로만 남기지 않음")
-
         def same_char(h, c):
             try:
-                return h.get("j") == c["j"] and match_score(old_fp(h), c) >= 90
+                return bool(link_gate(old_fp(h), new_fp(c), max(1, today - h["p"][-1][0])))
             except (IndexError, KeyError, TypeError):
                 return True     # 비교할 수 없으면 기록을 지우지 않음
         for k, c in cur.items():
             h = hist.get(k)
-            if h is not None and k in sv_odd.get(c["w"], ()):
+            if h is not None and k in sv_odd.get(c["w"], ()) and h.get("s") and h["s"] != c["s"]:
                 # 이전 기간이 아닌데 같은 이름의 서버가 바뀜 → 서버 이전이 아님
                 if c["w"] in sv_mass or same_char(h, c):
                     n_sv_skip += 1          # 같은 캐릭터로 보임 (서버 번호 표시 차이 등) — 기록은 이어가되 서버 이전으로 남기지 않음
@@ -1285,9 +1412,13 @@ def build_gone(hist, cur, mcodes, today, alive, jobs, wname=None, tr=None):
         else:
             why = "닉변·삭제 추정"
         j = h.get("j")
+        if h.get("on"):
+            n = h["on"]         # v1.5.0 이름 넘겨받기로 떼어 낸 예전 기록 — 원래 이름으로 표시(지금 그 이름은 다른 캐릭터)
         out.append({"why": why, "w": w, "s": h.get("s") or 0, "n": n, "g": h.get("g") or "",
                     "j": jobs[j] if isinstance(j, int) and 0 <= j < len(jobs) else (j if isinstance(j, str) else ""),
                     "bp": lp[1], "ml": lp[3], "mc": _mcode(mcodes, lp[6]), "sp": lp[5], "ach": lp[2], "last": lp[0]})
+        if h.get("on"):
+            out[-1]["sw"] = 1   # 이 이름은 지금 다른 캐릭터가 씀
     out.sort(key=lambda e: (-e["last"], -(e["bp"] or 0)))
     return out, below
 
