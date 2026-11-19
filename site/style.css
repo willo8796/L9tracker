@@ -1055,3 +1055,14 @@ body{min-height:calc(100vh / var(--z, 1));min-height:calc(100dvh / var(--z, 1));
   .toast{bottom:calc(26px + env(safe-area-inset-bottom))}
   .memo-save{min-height:40px}
 }
+
+/* 드랍율 (v1.6.0) */
+.drg{font-size:12px;font-weight:700;white-space:nowrap}
+.drt td.drmap{font-size:12px;color:var(--dim);max-width:260px}
+.drt tr.drbest td{background:rgba(125,255,176,.07)}
+.drt tr.rkrow{cursor:pointer}
+.drt tr.rkrow:hover td{background:rgba(var(--c),.08)}
+.drdet .sec{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.drbase{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line2);font-size:13px;color:var(--dim)}
+.drbase b{color:var(--hi)}
+.drbase .sub{font-size:12px}
