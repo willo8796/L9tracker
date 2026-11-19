@@ -1069,3 +1069,18 @@ body{min-height:calc(100vh / var(--z, 1));min-height:calc(100dvh / var(--z, 1));
 .drk{display:inline-block;font-size:10px;padding:0 4px;margin-right:5px;border:1px solid currentColor;vertical-align:middle;line-height:15px}
 .drk.mon{color:var(--dim)}
 .drk.box{color:var(--amb)}
+/* 드랍율 KPI · 표 숫자 정렬 (v1.7.1) */
+.drkpis{grid-template-columns:repeat(5,minmax(0,1fr))}
+.drkpis .kpi:last-child{border-right:0}
+.drkpis .kpi .v{display:flex;align-items:baseline;gap:4px;min-height:38px}
+.drkpis .kpi .v .u{font-family:var(--pix);font-size:14px;color:var(--dim);text-shadow:none;letter-spacing:0}
+.drkpis .kpi .s{margin-top:4px;line-height:1.5}
+.drt td{vertical-align:middle}
+.drt td .dg,.drt td.dg{font-size:18px;font-weight:400;letter-spacing:.02em}
+.drt td .sub{font-size:11px}
+@media (max-width:900px){.drkpis{grid-template-columns:repeat(2,minmax(0,1fr))}.drkpis .kpi:last-child{border-right:1px solid var(--line2)}}
+.drt .u2{font-family:var(--pix);font-size:11px;color:var(--dim);margin-left:3px;letter-spacing:0}
+
+/* v1.7.2 몬스터 전용 드랍표(상자 없음): KPI 4칸 */
+.drkpis.k4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:900px){.drkpis.k4{grid-template-columns:repeat(2,minmax(0,1fr))}}
