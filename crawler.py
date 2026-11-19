@@ -424,7 +424,23 @@ _REROLL_RE = re.compile(r"\D\d+$")
 
 def is_reroll(name, bp):
     """리세마라용 캐릭터로 보이면 True (사용자 기준 2026-11-18: 전투력 20만 이하 + 이름 끝 숫자). 닉네임 변경 연결 · 목록에서 뺌"""
-    return bool(name) and isinstance(bp, (int, float)) and 0 < bp <= REROLL_BP and bool(_REROLL_RE.search(name))
+    # 전투력을 모르면(0 · 없음) 낮은 것으로 봄 — 리세마라 캐릭터는 전투력 · 업적이 비어 있는 경우가 많음 (v1.7.2)
+    low = not isinstance(bp, (int, float)) or bp <= REROLL_BP
+    return bool(name) and low and bool(_REROLL_RE.search(name))
+
+
+def reroll_move(m, hist, cur):
+    """같은 월드 · 같은 서버 닉네임 변경 연결(moves 한 줄)이 리세마라 캐릭터 사이의 것인지 (예전에 쌓인 줄 정리용)"""
+    try:
+        fw, fn = m["from"][0], m["from"][1]
+        tw, tn = m["to"][0], m["to"][1]
+        if fw != tw or (m.get("fs") or [0])[0] != (m.get("ts") or [0])[0]:
+            return False        # 월드 · 서버 이전은 남김
+        k = f"{tw}|{tn}"
+        bp = cur[k]["bp"] if k in cur else (hist[k]["p"][-1][1] if k in hist and hist[k].get("p") else None)
+        return is_reroll(fn, bp) or is_reroll(tn, bp)
+    except (KeyError, IndexError, TypeError):
+        return False
 
 
 def name_norm(n):
@@ -1160,7 +1176,8 @@ class Builder:
             if not h["p"]:
                 del hist[k]
         legal = make_legal(tr, wname, today)
-        moves = [m for m in moves if m["d"] > today - MOVE_DAYS and (m.get("lv") not in ("확실", "유력") or legal_move(legal, m))]
+        moves = [m for m in moves if m["d"] > today - MOVE_DAYS and (m.get("lv") not in ("확실", "유력") or legal_move(legal, m))
+                 and not reroll_move(m, hist, cur)]      # 예전에 쌓인 리세마라 닉네임 변경도 정리 (v1.7.2)
         vis = {k: v for k, v in cur.items() if k not in self.hidden} if self.hidden else cur   # 오늘 chars 파일에 있는 캐릭터
         _dump(os.path.join(self.data, "gevents.json"), build_gevents(hist, vis, self.mcodes, today))
         _dump(os.path.join(self.data, "changes.json"),
@@ -1503,7 +1520,7 @@ def build_changes(hist, cur, mcodes, today, wname, moves=(), alive=None, jobs=()
         s = (c["s"] if c else h.get("s")) or 0
         sp = c["sp"] if c else (lp[5] if lp else None)
         ach = c["ach"] if c else (lp[2] if lp else None)
-        if bp is not None and bp <= REROLL_BP:     # 리세마라 캐릭터 닉네임 변경은 목록에서 뺌
+        if not bp or bp <= REROLL_BP:     # 리세마라 캐릭터 닉네임 변경은 목록에서 뺌 (전투력 모름도 포함)
             mv_d = {e[0] for e in ev if e[1] in ("월드 이전", "서버 변경")}    # 이전과 함께 바꾼 이름은 남김
             ev = [e for e in ev if not (e[1] == "닉네임 변경" and e[0] not in mv_d and (is_reroll(e[2], bp) or is_reroll(e[3], bp)))]
             if not ev:
