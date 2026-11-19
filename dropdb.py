@@ -11,6 +11,8 @@ drops.json 구조 (v=1)
   mons : [[몬스터ID, 이름, 레벨, 구분번호, [사냥터번호...]], ...]
   items: [[아이템ID, 이름, 등급번호], ...]
   d    : [몬스터번호, 아이템번호, 드랍율(%), 최소수량, 최대수량, ...] 5개씩 이어 붙임
+  boxes: [[상자ID, 이름, 등급번호, 추첨 횟수, 조건지급 의심(1/0)], ...]   (DB 에 boxes 표가 있을 때)
+  b    : [상자번호, 아이템번호, 확률(%), 최소수량, 최대수량, ...] 5개씩
 """
 import json
 import os
@@ -30,7 +32,10 @@ def rows_from_db(p):
     mons = c.execute("select monster_id, monster_name, level, tier, maps from monsters").fetchall()
     drops = c.execute("select monster_id, item_id, item_name, item_grade, drop_rate_pct, amount_min, amount_max, "
                       "monster_name, level, tier, maps from drops").fetchall()
-    return meta, mons, drops
+    boxes = c.execute("select box_id, box_name, box_grade, rolls, conditional, item_id, item_name, item_grade, rate_pct, "
+                      "amount_min, amount_max from boxes").fetchall() if c.execute(
+        "select 1 from sqlite_master where name='boxes'").fetchone() else []
+    return meta, mons, drops, boxes
 
 
 def rows_from_json(p):
@@ -40,11 +45,13 @@ def rows_from_json(p):
     mons = [(m["monster_id"], m["monster_name"], m.get("level"), m.get("tier"), m.get("maps") or "") for m in j.get("monsters", [])]
     drops = [(d["monster_id"], d["item_id"], d["item_name"], d.get("item_grade"), d["drop_rate_pct"], d.get("amount_min"),
               d.get("amount_max"), d.get("monster_name"), d.get("level"), d.get("tier"), d.get("maps") or "") for d in j.get("drops", [])]
-    return meta, mons, drops
+    boxes = [(b["box_id"], b.get("box_name"), b.get("box_grade"), b.get("rolls"), b.get("conditional"), b["item_id"], b.get("item_name"),
+              b.get("item_grade"), b["rate_pct"], b.get("amount_min"), b.get("amount_max")) for b in j.get("boxes", [])]
+    return meta, mons, drops, boxes
 
 
 def build(src, gv=""):
-    meta, mons, drops = (rows_from_json if src.lower().endswith(".json") else rows_from_db)(src)
+    meta, mons, drops, boxes = (rows_from_json if src.lower().endswith(".json") else rows_from_db)(src)
     maps, mi_of, mon_rows = [], {}, []
     map_ix = {}
 
@@ -85,13 +92,33 @@ def build(src, gv=""):
             items.append([iid, iname or "", grades.index(g)])
         r = float(rate or 0)
         d += [mi_of[mid], ii_of[iid], float(f"{r:.4g}"), int(amin or 1), int(amax or amin or 1)]
+
+    def item_ix(iid, iname, grade):
+        if iid not in ii_of:
+            g = grade or "일반"
+            if g not in grades:
+                grades.append(g)
+            ii_of[iid] = len(items)
+            items.append([iid, iname or "", grades.index(g)])
+        return ii_of[iid]
+
+    box_rows, bi_of, b = [], {}, []
+    for bid, bname, bgrade, rolls, cond, iid, iname, igrade, rate, amin, amax in boxes:
+        if bid not in bi_of:
+            g = bgrade or "일반"
+            if g not in grades:
+                grades.append(g)
+            bi_of[bid] = len(box_rows)
+            box_rows.append([bid, bname or "", grades.index(g), int(rolls or 1), 1 if (cond or "").strip().upper() == "Y" else 0])
+        r = float(rate or 0)
+        b += [bi_of[bid], item_ix(iid, iname, igrade), float(f"{r:.4g}"), int(amin or 1), int(amax or amin or 1)]
     ver = meta.get("data_version", "")
     m = re.search(r"(20\d\d)[-./ ]?(\d{1,2})[-./ ]?(\d{1,2})", ver)
     pd = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else ""
     gv = gv or next((str(meta[k]) for k in ("client_version", "game_version", "app_version", "version") if meta.get(k)), "")
     return {"v": 1, "ver": ver, "date": pd, "gv": gv.strip()[:40], "made": date.today().isoformat(), "src": meta.get("source", ""),
             "note": meta.get("excluded", ""), "maps": maps, "tiers": tiers, "grades": grades,
-            "mons": mon_rows, "items": items, "d": d}
+            "mons": mon_rows, "items": items, "d": d, "boxes": box_rows, "b": b}
 
 
 def main():
@@ -103,7 +130,7 @@ def main():
     with open(out, "w", encoding="utf-8") as f:
         json.dump(j, f, ensure_ascii=False, separators=(",", ":"))
     print(f"기준: {j['ver'] or '(없음)'}{' · 게임 버전 ' + j['gv'] if j['gv'] else ''}")
-    print(f"몬스터 {len(j['mons']):,}종 · 아이템 {len(j['items']):,}종 · 드랍 {len(j['d']) // 5:,}줄 → {out} ({os.path.getsize(out) / 1024:,.0f}KB)")
+    print(f"몬스터 {len(j['mons']):,}종 · 상자 {len(j['boxes']):,}종 · 아이템 {len(j['items']):,}종 · 드랍 {len(j['d']) // 5:,}줄 · 상자 {len(j['b']) // 5:,}줄 → {out} ({os.path.getsize(out) / 1024:,.0f}KB)")
 
 
 if __name__ == "__main__":
