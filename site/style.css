@@ -1084,3 +1084,11 @@ body{min-height:calc(100vh / var(--z, 1));min-height:calc(100dvh / var(--z, 1));
 /* v1.7.2 몬스터 전용 드랍표(상자 없음): KPI 4칸 */
 .drkpis.k4{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media (max-width:900px){.drkpis.k4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* 어빌리티 북 (v1.7.3) */
+.drtab{padding-top:10px}
+.drtab .seg button{padding:7px 16px;font-weight:700}
+.abt td{vertical-align:top}
+.abt .abs{white-space:nowrap}
+.abt .cfb.c3{margin-left:6px}
+.show-s{display:none}
+@media (max-width:640px){.show-s{display:inline}.abt .abs{white-space:normal}}

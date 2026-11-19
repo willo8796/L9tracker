@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.7.2';
+const VERSION = '1.7.3';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -2097,10 +2097,10 @@ let RENDERING = null;
    상자 = 1,000개 열 때 기대 개수 */
 const DR = (() => {
   const x = pickVals(lsJson('l9drop', sessionStorage), {q: ['s', 60], by: ['e', ['', 'item', 'mon', 'map']], map: ['n', -1, 9999], tier: ['n', -1, 99],
-    gs: ['s', 20], sort: ['e', ['rate', 'grade', 'name', 'src']], item: ['n', -1, 999999], view: ['e', ['src', 'map']], eb: ['e', ['hunt', 'all']], sk: ['e', ['', 'mon', 'box']]}, {});
-  return Object.assign({q: '', by: '', map: -1, tier: -1, gs: '', sort: 'rate', item: -1, view: 'src', eb: 'hunt', sk: ''}, x, {more: 60, dmore: 40});
+    gs: ['s', 20], sort: ['e', ['rate', 'grade', 'name', 'src']], item: ['n', -1, 999999], view: ['e', ['src', 'map']], eb: ['e', ['hunt', 'all']], sk: ['e', ['', 'mon', 'box']], tab: ['e', ['all', 'ab']], abt: ['s', 10], abw: ['e', ['', 'both', 'boss', 'hunt']], abi: ['n', -1, 999999]}, {});
+  return Object.assign({q: '', by: '', map: -1, tier: -1, gs: '', sort: 'rate', item: -1, view: 'src', eb: 'hunt', sk: '', tab: 'all', abt: '', abw: '', abi: -1}, x, {more: 60, dmore: 40});
 })();
-function saveDR(){ try{ sessionStorage.setItem('l9drop', JSON.stringify({q: DR.q, by: DR.by, map: DR.map, tier: DR.tier, gs: DR.gs, sort: DR.sort, item: DR.item, view: DR.view, eb: DR.eb, sk: DR.sk})); }catch(e){} }
+function saveDR(){ try{ sessionStorage.setItem('l9drop', JSON.stringify({q: DR.q, by: DR.by, map: DR.map, tier: DR.tier, gs: DR.gs, sort: DR.sort, item: DR.item, view: DR.view, eb: DR.eb, sk: DR.sk, tab: DR.tab, abt: DR.abt, abw: DR.abw, abi: DR.abi})); }catch(e){} }
 let DROPS = null, DROPS_ERR = '';
 async function loadDrops(){
   if(DROPS || DROPS_ERR) return DROPS;
@@ -2229,12 +2229,59 @@ function dropDetail(G, r){
       ${DR.view === 'map' ? `<span class="lbl">사냥터 효율 계산</span>${seg('dr-eb', DR.eb, [['hunt', '일반 · 정예만'], ['all', '보스 · 네임드 포함']])}` : ''}</div>
     ${DR.view === 'map' ? mapT : srcT}</div>`;
 }
+/* 어빌리티 북: 보스 · 네임드 출처와 일반 · 정예(몹) 출처를 나란히 */
+const AB_RE = /^어빌리티\s*:/, abType = n => (/\[([^\]]+)\]\s*$/.exec(n) || [])[1] || '';
+function abRows(G){
+  const out = [];
+  for(const [ii, rows] of G.byItem){
+    const it = G.items[ii]; if(!AB_RE.test(it[1])) continue;
+    const mons = rows.filter(i => !isBox(G, i)); if(!mons.length) continue;
+    const hunt = mons.filter(i => G.hunt.has(G.mons[srcOf(G, i)][3])).sort((a, b) => rateOf(G, b) - rateOf(G, a));
+    const boss = mons.filter(i => !G.hunt.has(G.mons[srcOf(G, i)][3])).sort((a, b) => rateOf(G, b) - rateOf(G, a));
+    out.push({ii, it, t: abType(it[1]), src: rows, hunt, boss, best: [...hunt, ...boss].reduce((x, i) => rateOf(G, i) > rateOf(G, x) ? i : x, mons[0]), nb: rows.length - mons.length, nmo: mons.length});
+  }
+  for(const r of out) r.rate = rateOf(G, r.best);
+  return out;
+}
+function abCell(G, a){
+  if(!a.length) return '';
+  const i = a[0], m = G.mons[srcOf(G, i)];
+  return `<div class="abs"><b>${esc(m[1])}</b> <span class="sub" style="display:inline">Lv.${m[2]} · ${esc(G.tiers[m[3]] || '')}</span></div>
+    <div class="sub drmap">${srcWhere(G, i)}</div><div><b class="dg">${nu(rateStr(rateOf(G, i)))}</b> <span class="sub" style="display:inline">${oneInT(rateOf(G, i), '마리')}</span>${a.length > 1 ? `<span class="cfb c3">+${nf(a.length - 1)}곳</span>` : ''}</div>`;
+}
+function pageAb(G){
+  const all = abRows(G), q = DR.q.toLowerCase().replace(/\s+/g, '');
+  const types = [...new Set(all.map(r => r.t).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+  if(DR.abt && !types.includes(DR.abt)) DR.abt = '';
+  const nBoth = all.filter(r => r.hunt.length && r.boss.length).length, nHunt = all.filter(r => r.hunt.length).length, nBoss = all.filter(r => !r.hunt.length).length;
+  let res = all.filter(r => (!DR.abt || r.t === DR.abt)
+    && (DR.abw === 'both' ? r.hunt.length && r.boss.length : DR.abw === 'hunt' ? r.hunt.length : DR.abw === 'boss' ? !r.hunt.length : true)
+    && (!q || G.itemL[r.ii].includes(q) || r.src.some(i => !isBox(G, i) && (srcNameL(G, i).includes(q) || srcMaps(G, i).some(p => G.mapL[p].includes(q))))));
+  res.sort((a, b) => (b.hunt.length ? 1 : 0) - (a.hunt.length ? 1 : 0) || (b.hunt.length ? rateOf(G, b.hunt[0]) - rateOf(G, a.hunt[0]) : 0) || b.rate - a.rate || a.it[1].localeCompare(b.it[1], 'ko'));
+  const sel = DR.abi >= 0 ? all.find(r => r.ii === DR.abi) : null;
+  if(DR.abi >= 0 && !sel){ DR.abi = -1; saveDR(); }
+  const kp = [['몬스터가 주는 북', kv(nf(all.length), '종'), '보스 · 네임드 · 일반 · 정예 전체'], ['일반 · 정예도 줌', kv(nf(nHunt), '종'), `그중 보스 · 네임드도 주는 것 ${nf(nBoth)}종`],
+    ['보스 · 네임드만', kv(nf(nBoss), '종'), '일반 · 정예 몬스터는 주지 않음'], ['드랍 몬스터', kv(nf(new Set(all.flatMap(r => r.src.filter(i => !isBox(G, i)).map(i => srcOf(G, i)))).size), '종'), '어빌리티 북을 1종 이상 주는 몬스터']];
+  const ctrls = `<div class="ctrls"><input class="q" data-in="dr-q" value="${esc(DR.q)}" placeholder="어빌리티 · 몬스터 · 사냥터 이름" style="width:240px">
+      <span class="lbl">나오는 곳</span>${seg('ab-w', DR.abw, [['', '전체 ' + all.length], ['both', '보스 · 몹 둘 다 ' + nBoth], ['hunt', '몹에서도 ' + nHunt], ['boss', '보스 · 네임드만 ' + nBoss]])}</div>
+    <div class="ctrls"><span class="lbl">종류</span>${seg('ab-t', DR.abt, [['', '전체'], ...types.map(t => [t, t])])}
+      ${DR.q || DR.abt || DR.abw ? '<button class="btn" data-act="ab-reset">조건 지우기</button>' : ''}</div>`;
+  const list = res.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk drt abt"><tr><th class="l">어빌리티 북</th><th class="hide-s">종류</th><th class="l">일반 · 정예 몬스터 (최고 확률)</th><th class="l">보스 · 네임드 (최고 확률)</th><th class="hide-s">나오는 곳</th></tr>
+      ${res.map(r => `<tr class="rkrow" data-act="ab-item" data-v="${r.ii}" tabindex="0"><td class="l"><b style="color:${GRADE_C[r.it[2]] || ''}">${esc(r.it[1].replace(AB_RE, '').replace(/\s*\[[^\]]+\]\s*$/, '').trim())}</b><div class="sub">${gradeTag(G, r.it[2])}<span class="show-s"> · ${esc(r.t)}</span></div></td><td class="hide-s">${esc(r.t)}</td>
+        <td class="l">${r.hunt.length ? abCell(G, r.hunt) : '<span class="sub">일반 · 정예는 주지 않음</span>'}</td><td class="l">${r.boss.length ? abCell(G, r.boss) : '<span class="sub">보스 · 네임드는 주지 않음</span>'}</td>
+        <td class="hide-s">${r.hunt.length ? `몹 ${nf(r.hunt.length)}` : ''}${r.hunt.length && r.boss.length ? '<br>' : ''}${r.boss.length ? `보스 ${nf(r.boss.length)}` : ''}</td></tr>`).join('')}</table></div>`
+    : '<div class="empty" style="padding:14px 16px">조건에 맞는 어빌리티 북이 없습니다</div>';
+  return `<div class="kpis drkpis k4">${kp.map(([l, v, s]) => `<div class="kpi"><div class="lb">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join('')}</div>
+    ${sel ? dropDetail(G, Object.assign({}, sel, {src: sel.src.slice()})) : `${ctrls}<div class="sec">어빌리티 북 <small>${nf(res.length)}종</small></div>${list}
+    <div class="sub" style="padding:8px 16px">몹 = 일반 · 정예 몬스터, 보스 = 보스 · 네임드${G.tiers.includes('기타') ? ' · 기타' : ''}. 칸마다 가장 잘 주는 몬스터 1곳을 보여 주며, 북을 누르면 모든 출처와 사냥터별 효율이 나옵니다. 여기 없는 어빌리티 북은 몬스터가 주지 않습니다 (상점 · 제작 · 상자 등).</div>`}`;
+}
 async function pageDrop(){
   const G = await loadDrops();
   if(!G) return blank('드랍율 데이터가 없습니다', DROPS_ERR === 'none'
     ? (D.local ? '프로그램 폴더에서 4_드랍DB만들기.bat 를 실행해 data\\web\\data\\drops.json 을 만드세요' : '저장소 site 폴더에 drops.l9e 를 올리면 다음 배포부터 보입니다 (사용 설명서 참고)')
     : esc(DROPS_ERR));
   if(!G.boxes.length && DR.sk){ DR.sk = ''; saveDR(); }
+  const tabs = `<div class="ctrls drtab">${seg('dr-tab', DR.tab, [['all', '전체 드랍율'], ['ab', '어빌리티 북']])}</div>`;
   const res = dropSearch(G);
   const sel = DR.item >= 0 ? res.find(r => r.ii === DR.item) : null;
   const gs = new Set(DR.gs.split(',').filter(Boolean).map(Number));
@@ -2263,8 +2310,9 @@ async function pageDrop(){
       <br><b>상자 확률</b> = 상자 1개를 열 때 나올 확률(%) — 여러 칸에서 나오면 합산, 100%를 넘으면 기대 개수. '조건 지급 의심' 상자는 직업 · 조건에 따라 하나만 받을 수 있어 확률을 그대로 믿으면 안 됩니다.
       <br><b>몬스터 효율</b> = 1,000마리 잡을 때 기대 개수(드랍율 × 평균 수량). <b>사냥터 효율</b> = 그 사냥터 몬스터를 고르게 1,000마리 잡을 때 기대 개수 — 기본은 늘 사냥하는 일반 · 정예만 (보스 · 네임드는 가끔 나오므로 따로 고를 수 있음).
       <br>${esc(G.note || '이벤트 한정 드랍 · 레벨 차이 보정 · 서버 보정은 반영하지 않았습니다')}. 게임 패치 뒤에는 데이터를 다시 만들어야 합니다.`)}
-    ${ctrls}
-    ${sel ? dropDetail(G, sel) : `<div class="sec">검색 결과 <small>${nf(res.length)}개</small></div>${list}`}
+    ${tabs}
+    ${DR.tab === 'ab' ? pageAb(G) : `${ctrls}
+    ${sel ? dropDetail(G, sel) : `<div class="sec">검색 결과 <small>${nf(res.length)}개</small></div>${list}`}`}
   </section>`;
 }
 
@@ -2645,7 +2693,12 @@ document.addEventListener('click', async ev => {
     else if(act === 'dr-reset'){ Object.assign(DR, {q: '', by: '', map: -1, tier: -1, gs: '', sk: '', item: -1, more: 60}); saveDR(); await render(); }
     else if(act === 'dr-sk'){ DR.sk = b.dataset.v; if(DR.sk === 'box'){ DR.map = -1; DR.tier = -1; } DR.more = 60; DR.item = -1; saveDR(); await render(); }
     else if(act === 'dr-item'){ DR.item = Number(b.dataset.v); DR.dmore = 40; saveDR(); await render(); window.scrollTo({top: ($('#main').offsetTop || 0) - 10}); }
-    else if(act === 'dr-close'){ DR.item = -1; saveDR(); await render(); }
+    else if(act === 'dr-close'){ if(DR.tab === 'ab') DR.abi = -1; else DR.item = -1; saveDR(); await render(); }
+    else if(act === 'dr-tab'){ DR.tab = b.dataset.v; DR.q = ''; saveDR(); await render(); }
+    else if(act === 'ab-item'){ DR.abi = Number(b.dataset.v); DR.dmore = 40; saveDR(); await render(); window.scrollTo({top: ($('#main').offsetTop || 0) - 10}); }
+    else if(act === 'ab-w'){ DR.abw = b.dataset.v; DR.abi = -1; saveDR(); await render(); }
+    else if(act === 'ab-t'){ DR.abt = b.dataset.v; DR.abi = -1; saveDR(); await render(); }
+    else if(act === 'ab-reset'){ Object.assign(DR, {q: '', abt: '', abw: '', abi: -1}); saveDR(); await render(); }
     else if(act === 'dr-eb'){ DR.eb = b.dataset.v; saveDR(); await render(); }
     else if(act === 'dr-view'){ DR.view = b.dataset.v; saveDR(); await render(); }
     else if(act === 'dr-more'){ DR.more += 60; await render(); }
@@ -2760,7 +2813,7 @@ document.addEventListener('input', e => {
   if(e.target.dataset?.in === 'tr-q'){ TRF.q = e.target.value; TRF.page = 0; saveTRF(); clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.dataset?.in === 'cg-q'){ CG.q = e.target.value; cgResetMore(); clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.id === 'gcmText') GCD[e.target.dataset.gk] = e.target.value;
-  if(e.target.dataset?.in === 'dr-q'){ DR.q = e.target.value; DR.more = 60; DR.item = -1; saveDR(); clearTimeout(QT); QT = setTimeout(render, 250); }
+  if(e.target.dataset?.in === 'dr-q'){ DR.q = e.target.value; DR.more = 60; DR.item = -1; DR.abi = -1; saveDR(); clearTimeout(QT); QT = setTimeout(render, 250); }
   if(e.target.dataset?.in === 'rk-q'){ RK.q = e.target.value; RK.page = 0; clearTimeout(QT); QT = setTimeout(render, 250); }
   const mk = e.target.dataset?.memo;
   if(mk){ const st = e.target.closest('.memo-in')?.querySelector('.memo-st'); if(st){ const dirty = e.target.value !== memoGet(mk); st.textContent = dirty ? '등록 안 됨' : (e.target.value ? '등록됨' : ''); st.classList.toggle('dirty', dirty); } }
