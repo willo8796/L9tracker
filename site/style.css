@@ -1066,3 +1066,6 @@ body{min-height:calc(100vh / var(--z, 1));min-height:calc(100dvh / var(--z, 1));
 .drbase{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line2);font-size:13px;color:var(--dim)}
 .drbase b{color:var(--hi)}
 .drbase .sub{font-size:12px}
+.drk{display:inline-block;font-size:10px;padding:0 4px;margin-right:5px;border:1px solid currentColor;vertical-align:middle;line-height:15px}
+.drk.mon{color:var(--dim)}
+.drk.box{color:var(--amb)}

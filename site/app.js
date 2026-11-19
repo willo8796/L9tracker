@@ -1,6 +1,6 @@
 'use strict';
 /* 로드나인 캐릭터 추적기 — 웹 화면 (GitHub 웹 · 내 PC 프로그램 공용) */
-const VERSION = '1.6.1';
+const VERSION = '1.7.0';
 const DEFAULT_PLAYLIST = 'PLa0HLtbB3Lvw';
 const AUTO_HOUR = 12;
 
@@ -1726,7 +1726,7 @@ function pageHelp(){
       <dt>TOP 20</dt><dd>대표 마스터리 TOP 20과 전투력 TOP 20.</dd>
       <dt>통계</dt><dd>캐릭터 수 · 평균 · 최고, 전투력 · 마스터리 · 전문화 분포, 직업 · 무기 통계, 서버별 비교, 순위 컷.</dd>
       <dt>변경 이력</dt><dd>위쪽 소메뉴로 <b>변경 목록</b> · <b>이전 추적</b> · <b>세탁 의심</b> · <b>행방 불명</b> · <b>연관 추정</b>을 나눠 봅니다(소메뉴에 건수 표시). 기간 · 월드 · 서버 · 찾기는 모든 소메뉴에 같이 적용되고, 소메뉴마다 종류 · 확실도 · 단계 · 비교 대상 · 정렬 필터가 따로 있습니다. 각 화면 설명은 [이 화면 설명]을 눌러 펼칩니다. 월드 · 서버 이전은 스토브 공지에 나온 <b>이전 기간</b>(+다음 날 수집분)에 대상 월드 · 서버에서 옮긴 것만 인정합니다. 일정은 월초(주요 일정 캘린더) · 평시 7일마다 · 이전 기간 7일 전부터 매일 공지사항으로 확인합니다. 평시에는 닉네임 변경만, 이전 기간에는 이전 · 세탁 의심까지 찾습니다(위쪽 상태 표시). 세탁 의심 카드에는 <b>의심 이유</b>(이전 · 닉네임 · 길드 · 의상 변경, 반복 횟수, 같은 캐릭터 판정)가 적혀 있습니다. 변경 목록은 매일 수집 때 닉네임 · 길드 · 월드 · 서버가 바뀐 캐릭터 목록(최근 수집일 / 7일 / 30일 / 전체). 이전 추적에는 월드 · 서버를 옮긴 캐릭터를 자동으로 따라가서 옮긴 뒤 닉네임 · 길드 변화를 보여줍니다. 이어 붙인 결과는 <b>확실</b> / <b>유력</b>으로 구분합니다. 월드 · 서버 필터, 이전 닉네임으로도 찾기(지금 그 이름을 쓰는 다른 캐릭터와 구분 표시), 캐릭터를 산 뒤 관련 닉네임으로 바꾼 경우를 찾는 <b>닉네임 연관 추정(참고)</b>, 월드 · 서버를 옮기며 닉네임 · 길드 · 의상을 바꾼 <b>이전 세탁 의심</b>과 <b>행방 불명</b> 캐릭터 목록이 있습니다.</dd>
-      <dt>드랍율</dt><dd>게임 클라이언트 데이터로 만든 몬스터 드랍표입니다. 아이템 · 몬스터 · 사냥터 이름으로 찾고 등급 · 사냥터 · 몬스터 구분으로 좁힐 수 있습니다. 아이템을 누르면 드랍율이 가장 높은 몬스터, 1,000마리당 기대 개수가 가장 많은 몬스터(몬스터 효율), 일반 · 정예를 고르게 잡을 때 가장 많이 나오는 사냥터(사냥터 효율)를 보여 줍니다. 게임 패치 뒤에는 bat\\4_드랍DB만들기.bat 로 다시 만들어 올리세요.</dd>
+      <dt>드랍율</dt><dd>게임 클라이언트 데이터로 만든 몬스터 드랍표 · 상자 내용물 확률표입니다. 아이템 · 몬스터 · 상자 · 사냥터 이름으로 찾고 출처(몬스터/상자), 등급 · 사냥터 · 몬스터 구분으로 좁힐 수 있습니다. 아이템을 누르면 드랍율이 가장 높은 몬스터, 1,000마리당 기대 개수가 가장 많은 몬스터(몬스터 효율), 일반 · 정예를 고르게 잡을 때 가장 많이 나오는 사냥터(사냥터 효율)를 보여 줍니다. 게임 패치 뒤에는 bat\\4_드랍DB만들기.bat 로 다시 만들어 올리세요.</dd>
       <dt>경험치 계산기</dt><dd>사냥 결과 창 캡처를 끌어다 놓거나 Ctrl+V로 붙여넣으면 사냥터 · 사냥 시간 · M 경험치를 읽어 1분당 · 1시간당 경험치를 기록하고, 가장 효율 좋은 사냥터를 ★로 표시합니다. 사냥터 이름 앞뒤에 잘못 읽힌 글자는 자동으로 떼어냅니다. 잘못 읽은 기록은 [수정]으로 고칠 수 있습니다.</dd>
       <dt>통합레벨 계산기</dt><dd>내 · 상대 통합 레벨을 넣으면 PvP 레벨 차이 보정(피해량 · 치명타 · 명중 · 상태이상)을 보여줍니다. 무기 11종 레벨 · 경험치 %로 내 통합 레벨을 계산하고, 상대는 무기 레벨만으로 나올 수 있는 통합 레벨과 확률을 추정합니다. 추적 캐릭터의 마스터리를 불러올 수 있습니다.</dd>
       <dt>추적</dt><dd>추적 등록한 캐릭터 관리 — 위쪽 소메뉴로 <b>캐릭터 목록</b>(20명씩 쪽 넘김) · <b>길드별</b>(길드로 묶어 인원 · 평균/최고 전투력, 누르면 그 길드원만 목록) · <b>종합 현황</b> · <b>상세</b>(이전/다음으로 넘겨 보기)를 나눠 봅니다. 캐릭터명 · 길드명 찾기, 길드 · 월드 필터와 정렬, 목록 · 종합 현황 · 상세, 닉네임 · 길드 변경 이력, 여러 명 선택 해제.</dd>
@@ -2090,26 +2090,30 @@ function noData(){
 }
 function route(){ const r = (location.hash || '#my').slice(1); return ['my', 'guild', 'rank', 'top', 'stats', 'chg', 'drop', 'exp', 'lvl', 'track', 'help'].includes(r) ? r : r === 'fav' ? 'track' : 'my'; }
 let RENDERING = null;
-/* ============================================================ 드랍율 (v1.6.0)
-   data/drops.json — dropdb.py 로 만든 작은 파일 (몬스터 · 아이템 번호표 + 5칸씩 이어 붙인 드랍 줄).
-   효율: 몬스터 = 1마리당 기대 개수(드랍율 × 평균 수량), 사냥터 = 그 사냥터 몬스터를 고르게 잡을 때 1,000마리당 기대 개수 */
+/* ============================================================ 드랍율 (v1.6.0 몬스터, v1.7.0 상자 추가)
+   data/drops.json — dropdb.py 로 만든 작은 파일. 몬스터 드랍 줄(d)과 상자 내용물 줄(b)을 한 줄 번호로 다룸:
+   줄 번호 i < G.nm 이면 몬스터 줄, 그 밖은 상자 줄 (G.u = d 뒤에 b 를 이어 붙인 5칸 배열).
+   효율: 몬스터 = 1,000마리당 기대 개수(드랍율 × 평균 수량), 사냥터 = 그 사냥터 몬스터를 고르게 잡을 때 1,000마리당 기대 개수,
+   상자 = 1,000개 열 때 기대 개수 */
 const DR = (() => {
   const x = pickVals(lsJson('l9drop', sessionStorage), {q: ['s', 60], by: ['e', ['', 'item', 'mon', 'map']], map: ['n', -1, 9999], tier: ['n', -1, 99],
-    gs: ['s', 20], sort: ['e', ['rate', 'grade', 'name', 'src']], item: ['n', -1, 999999], view: ['e', ['mon', 'map']], eb: ['e', ['hunt', 'all']]}, {});
-  return Object.assign({q: '', by: '', map: -1, tier: -1, gs: '', sort: 'rate', item: -1, view: 'mon', eb: 'hunt'}, x, {more: 60, dmore: 40});
+    gs: ['s', 20], sort: ['e', ['rate', 'grade', 'name', 'src']], item: ['n', -1, 999999], view: ['e', ['src', 'map']], eb: ['e', ['hunt', 'all']], sk: ['e', ['', 'mon', 'box']]}, {});
+  return Object.assign({q: '', by: '', map: -1, tier: -1, gs: '', sort: 'rate', item: -1, view: 'src', eb: 'hunt', sk: ''}, x, {more: 60, dmore: 40});
 })();
-function saveDR(){ try{ sessionStorage.setItem('l9drop', JSON.stringify({q: DR.q, by: DR.by, map: DR.map, tier: DR.tier, gs: DR.gs, sort: DR.sort, item: DR.item, view: DR.view, eb: DR.eb})); }catch(e){} }
+function saveDR(){ try{ sessionStorage.setItem('l9drop', JSON.stringify({q: DR.q, by: DR.by, map: DR.map, tier: DR.tier, gs: DR.gs, sort: DR.sort, item: DR.item, view: DR.view, eb: DR.eb, sk: DR.sk})); }catch(e){} }
 let DROPS = null, DROPS_ERR = '';
 async function loadDrops(){
   if(DROPS || DROPS_ERR) return DROPS;
   try{
     const j = await getJSON('data/drops.json');
     if(!j || j.v !== 1 || !Array.isArray(j.d) || !Array.isArray(j.items) || !Array.isArray(j.mons)) throw new Error('드랍 데이터 형식이 맞지 않습니다');
-    const n = Math.floor(j.d.length / 5), byItem = new Map(), mapMons = new Array(j.maps.length).fill(0), mapHunt = new Array(j.maps.length).fill(0), hunt = new Set(['일반', '정예'].map(t => j.tiers.indexOf(t)));
-    for(let i = 0; i < n; i++){ const ii = j.d[i * 5 + 1]; let a = byItem.get(ii); if(!a) byItem.set(ii, a = []); a.push(i); }
+    const b = Array.isArray(j.b) ? j.b : [], boxes = Array.isArray(j.boxes) ? j.boxes : [];
+    const nm = Math.floor(j.d.length / 5), u = j.d.concat(b), n = Math.floor(u.length / 5);
+    const byItem = new Map(), mapMons = new Array(j.maps.length).fill(0), mapHunt = new Array(j.maps.length).fill(0), hunt = new Set(['일반', '정예'].map(t => j.tiers.indexOf(t)));
+    for(let i = 0; i < n; i++){ const ii = u[i * 5 + 1]; let a = byItem.get(ii); if(!a) byItem.set(ii, a = []); a.push(i); }
     for(const m of j.mons) for(const p of m[4] || []) if(p >= 0 && p < mapMons.length){ mapMons[p]++; if(hunt.has(m[3])) mapHunt[p]++; }
     const lower = s => String(s || '').toLowerCase();
-    DROPS = Object.assign(j, {n, byItem, mapMons, mapHunt, hunt, itemL: j.items.map(it => lower(it[1])), monL: j.mons.map(m => lower(m[1])), mapL: j.maps.map(lower)});
+    DROPS = Object.assign(j, {u, nm, n, boxes, byItem, mapMons, mapHunt, hunt, itemL: j.items.map(it => lower(it[1])), monL: j.mons.map(m => lower(m[1])), boxL: boxes.map(x => lower(x[1])), mapL: j.maps.map(lower)});
   }catch(e){ DROPS_ERR = /404/.test(e.message || '') ? 'none' : (e.message || String(e)); }
   return DROPS;
 }
@@ -2121,20 +2125,30 @@ function dropBase(G){   // 드랍표 기준 날짜 · 게임 버전
   return {d, gv: G.gv || '', made: G.made || ''};
 }
 function gradeTag(G, gi){ return `<span class="drg" style="color:${GRADE_C[gi] || 'var(--ink)'}">${esc(G.grades[gi] || '')}</span>`; }
-function rateStr(r){ return r >= 100 ? nf(Math.round(r * 10) / 10) + '%' : r >= 1 ? r.toFixed(2).replace(/\.?0+$/, '') + '%' : r >= 0.001 ? r.toPrecision(3).replace(/\.?0+$/, '') + '%' : '0.001% 미만'; }
-function oneIn(r){ if(r >= 100) return '매번'; const k = 100 / r; return k >= 1e8 ? '사실상 없음' : '약 ' + (k >= 100 ? nf(Math.round(k)) : k.toFixed(k < 10 ? 1 : 0)) + '마리'; }
-function oneInT(r){ const s = oneIn(r); return r >= 100 ? '매번 나옴' : s === '사실상 없음' ? s : s + '당 1번'; }
+function rateStr(r){ return r >= 100 ? nf(Math.round(r * 10) / 10) + '%' : r >= 1 ? r.toFixed(2).replace(/\.?0+$/, '') + '%' : r >= 0.001 ? r.toPrecision(3).replace(/\.?0+$/, '') + '%' : r >= 0.0001 ? r.toPrecision(2).replace(/\.?0+$/, '') + '%' : '0.0001% 미만'; }
+function oneIn(r, unit){ if(r >= 100) return '매번'; const k = 100 / r; return k >= 1e8 ? '사실상 없음' : '약 ' + (k >= 100 ? nf(Math.round(k)) : k.toFixed(k < 10 ? 1 : 0)) + (unit || '마리'); }
+function oneInT(r, unit){ const s = oneIn(r, unit); return r >= 100 ? '매번 나옴' : s === '사실상 없음' ? s : s + '당 1번'; }
 function amtStr(a, b){ return a === b ? nf(a) : nf(a) + '~' + nf(b); }
-function expPer(G, i){ const d = G.d, o = i * 5; return d[o + 2] / 100 * (d[o + 3] + d[o + 4]) / 2; }   // 1마리당 기대 개수
+const isBox = (G, i) => i >= G.nm;
+const srcOf = (G, i) => G.u[i * 5];                 // 몬스터 번호 또는 상자 번호
+const rateOf = (G, i) => G.u[i * 5 + 2];
+function expPer(G, i){ const o = i * 5; return G.u[o + 2] / 100 * (G.u[o + 3] + G.u[o + 4]) / 2; }   // 1마리 · 1개당 기대 개수
 function expStr(v){ return v >= 100 ? nf(Math.round(v)) : v >= 0.01 ? v.toFixed(2).replace(/\.?0+$/, '') : v > 0 ? '0.01 미만' : '0'; }
+const condBox = (G, i) => isBox(G, i) && !!G.boxes[srcOf(G, i)][4];
+const unitOf = (G, i) => isBox(G, i) ? '개' : '마리';
+function srcMaps(G, i){ return isBox(G, i) ? [] : (G.mons[srcOf(G, i)][4] || []); }
+function srcNameL(G, i){ return isBox(G, i) ? G.boxL[srcOf(G, i)] : G.monL[srcOf(G, i)]; }
 function dropRowOk(G, i, q){
-  const d = G.d, o = i * 5, m = G.mons[d[o]];
-  if(DR.map >= 0 && !(m[4] || []).includes(DR.map)) return false;
-  if(DR.tier >= 0 && m[3] !== DR.tier) return false;
-  if(q && (DR.by === 'mon' || DR.by === 'map')){
-    if(DR.by === 'mon' && !G.monL[d[o]].includes(q)) return false;
-    if(DR.by === 'map' && !(m[4] || []).some(p => G.mapL[p].includes(q))) return false;
+  const box = isBox(G, i);
+  if(DR.sk === 'mon' && box || DR.sk === 'box' && !box) return false;
+  if(box && (DR.map >= 0 || DR.tier >= 0)) return false;           // 사냥터 · 몬스터 구분을 고르면 몬스터만
+  if(!box){
+    const m = G.mons[srcOf(G, i)];
+    if(DR.map >= 0 && !(m[4] || []).includes(DR.map)) return false;
+    if(DR.tier >= 0 && m[3] !== DR.tier) return false;
   }
+  if(q && DR.by === 'mon' && !srcNameL(G, i).includes(q)) return false;
+  if(q && DR.by === 'map' && !srcMaps(G, i).some(p => G.mapL[p].includes(q))) return false;
   return true;
 }
 function dropSearch(G){
@@ -2145,80 +2159,99 @@ function dropSearch(G){
     const nameHit = !q || G.itemL[ii].includes(q);
     if(DR.by === 'item' && !nameHit) continue;
     let src = rows.filter(i => dropRowOk(G, i, q));
-    if(q && DR.by === '' && !nameHit) src = src.filter(i => { const m = G.mons[G.d[i * 5]]; return G.monL[G.d[i * 5]].includes(q) || (m[4] || []).some(p => G.mapL[p].includes(q)); });
+    if(q && DR.by === '' && !nameHit) src = src.filter(i => srcNameL(G, i).includes(q) || srcMaps(G, i).some(p => G.mapL[p].includes(q)));
     if(!src.length) continue;
-    let best = src[0]; for(const i of src) if(G.d[i * 5 + 2] > G.d[best * 5 + 2]) best = i;
-    out.push({ii, it, src, best, rate: G.d[best * 5 + 2]});
+    // 최고 확률: '조건 지급 의심' 상자는 확률을 믿기 어려우므로 다른 출처가 있으면 그쪽에서 고름
+    const sure = src.filter(i => !condBox(G, i)), pool = sure.length ? sure : src;
+    let best = pool[0], nb = 0; for(const i of pool) if(rateOf(G, i) > rateOf(G, best)) best = i;
+    for(const i of src) if(isBox(G, i)) nb++;
+    out.push({ii, it, src, best, rate: rateOf(G, best), nb, nmo: src.length - nb});
   }
   const s = DR.sort;
   out.sort(s === 'grade' ? (a, b) => b.it[2] - a.it[2] || b.rate - a.rate : s === 'name' ? (a, b) => a.it[1].localeCompare(b.it[1], 'ko') : s === 'src' ? (a, b) => b.src.length - a.src.length || b.rate - a.rate : (a, b) => b.rate - a.rate || b.it[2] - a.it[2]);
   return out;
 }
 function mapEff(G, src){
-  // 사냥터별: 이 아이템을 주는 몬스터의 기대 개수 합 ÷ 그 사냥터의 몬스터 종류 수 (고르게 잡을 때 1마리당)
+  // 사냥터별: 이 아이템을 주는 몬스터의 기대 개수 합 ÷ 그 사냥터의 몬스터 종류 수 (고르게 잡을 때 1마리당). 상자는 제외
   const m = new Map(), all = DR.eb === 'all';
   for(const i of src){
-    const mo = G.mons[G.d[i * 5]], e = expPer(G, i);
+    if(isBox(G, i)) continue;
+    const mo = G.mons[srcOf(G, i)], e = expPer(G, i);
     if(!all && !G.hunt.has(mo[3])) continue;      // 기본: 보스 · 네임드처럼 가끔 나오는 몬스터는 사냥터 효율에서 뺌
     for(const p of mo[4] || []){ let o = m.get(p); if(!o) m.set(p, o = {p, sum: 0, n: 0, best: i}); o.sum += e; o.n++; if(e > expPer(G, o.best)) o.best = i; }
   }
   return [...m.values()].map(o => Object.assign(o, {tot: (all ? G.mapMons : G.mapHunt)[o.p], eff: o.sum / Math.max(1, (all ? G.mapMons : G.mapHunt)[o.p])})).sort((a, b) => b.eff - a.eff);
 }
-function monName(G, mi){ const m = G.mons[mi]; return `${esc(m[1])} <span class="sub" style="display:inline">Lv.${m[2]} · ${esc(G.tiers[m[3]] || '')}</span>`; }
-function mapNames(G, mi){ const p = G.mons[mi][4] || []; return p.length ? p.map(x => esc(G.maps[x])).join(', ') : '<span class="sub">사냥터 정보 없음</span>'; }
+function srcTitle(G, i){   // 출처 이름 + 설명
+  const s = srcOf(G, i);
+  if(isBox(G, i)){ const x = G.boxes[s]; return `<span class="drk box">상자</span>${esc(x[1])} <span class="sub" style="display:inline">${esc(G.grades[x[2]] || '')} · ${nf(x[3])}칸 추첨</span>${x[4] ? '<span class="cfb c2" title="모든 칸이 100%인 상자 — 직업 · 조건에 따라 하나만 지급될 가능성이 큼. 확률을 그대로 믿지 마세요">조건 지급 의심</span>' : ''}`; }
+  const m = G.mons[s]; return `<span class="drk mon">몬스터</span>${esc(m[1])} <span class="sub" style="display:inline">Lv.${m[2]} · ${esc(G.tiers[m[3]] || '')}</span>`;
+}
+function srcWhere(G, i){ if(isBox(G, i)) return '<span class="sub">상자를 열 때</span>'; const p = srcMaps(G, i); return p.length ? p.map(x => esc(G.maps[x])).join(', ') : '<span class="sub">사냥터 정보 없음</span>'; }
+function srcShort(G, i){ return esc((isBox(G, i) ? G.boxes : G.mons)[srcOf(G, i)][1]); }
 function dropDetail(G, r){
   const it = r.it, src = r.src.slice(), eff = mapEff(G, src);
-  const bestMon = src.reduce((a, i) => expPer(G, i) > expPer(G, a) ? i : a, src[0]);
-  src.sort((a, b) => G.d[b * 5 + 2] - G.d[a * 5 + 2]);
-  const top = eff[0];
+  const mons = src.filter(i => !isBox(G, i)), bx = src.filter(i => isBox(G, i));
+  const pick = (a, f) => a.length ? a.reduce((x, i) => f(i) > f(x) ? i : x, a[0]) : -1;
+  const bestMon = pick(mons, i => expPer(G, i));
+  const bxOk = bx.filter(i => !G.boxes[srcOf(G, i)][4]), bestBox = pick(bxOk.length ? bxOk : bx, i => rateOf(G, i));
+  src.sort((a, b) => rateOf(G, b) - rateOf(G, a));
+  const top = eff[0], all = r.src.length < (G.byItem.get(r.ii) || []).length;
   const kp = [
-    ['최고 드랍율', rateStr(G.d[r.best * 5 + 2]), `${esc(G.mons[G.d[r.best * 5]][1])} · ${oneInT(G.d[r.best * 5 + 2])}`],
-    ['몬스터 효율 1위', expStr(expPer(G, bestMon) * 1000) + '개', `${esc(G.mons[G.d[bestMon * 5]][1])} · 1,000마리당 기대 개수`],
-    ['사냥터 효율 1위', top ? expStr(top.eff * 1000) + '개' : '--', top ? `${esc(G.maps[top.p])} · ${DR.eb === 'all' ? '전체' : '일반 · 정예'} 고르게 1,000마리 잡을 때` : (DR.eb === 'all' ? '사냥터 정보 없음' : '일반 · 정예는 주지 않음')],
-    ['드랍하는 몬스터', nf(src.length) + '종', eff.length ? `사냥터 ${nf(eff.length)}곳` : '']];
-  const monT = `<div class="tbl" style="margin:0;border:0"><table class="rk drt"><tr><th class="l">몬스터</th><th class="l">사냥터</th><th>드랍율</th><th>몇 마리당 1번</th><th class="hide-s">한 번에</th><th>1,000마리당 기대 개수</th></tr>
-    ${src.slice(0, DR.dmore).map(i => { const o = i * 5, d = G.d; return `<tr${i === bestMon ? ' class="drbest"' : ''}><td class="l">${monName(G, d[o])}${i === bestMon ? '<span class="cfb c1">효율 1위</span>' : ''}</td><td class="l drmap">${mapNames(G, d[o])}</td>
-      <td><b class="dg">${rateStr(d[o + 2])}</b></td><td>${oneIn(d[o + 2])}</td><td class="hide-s">${amtStr(d[o + 3], d[o + 4])}개</td><td class="dg">${expStr(expPer(G, i) * 1000)}</td></tr>`; }).join('')}</table></div>
-    ${cgMore('dr-dmore', src.length - DR.dmore, '종')}`;
+    ['최고 확률', rateStr(r.rate), `${srcShort(G, r.best)} · ${oneInT(r.rate, unitOf(G, r.best))}${condBox(G, r.best) ? ' · 조건 지급 의심' : ''}`],
+    ['몬스터 효율 1위', bestMon >= 0 ? expStr(expPer(G, bestMon) * 1000) + '개' : '--', bestMon >= 0 ? `${srcShort(G, bestMon)} · 1,000마리당 기대 개수` : '몬스터는 주지 않음'],
+    ['사냥터 효율 1위', top ? expStr(top.eff * 1000) + '개' : '--', top ? `${esc(G.maps[top.p])} · ${DR.eb === 'all' ? '전체' : '일반 · 정예'} 고르게 1,000마리 잡을 때` : (!mons.length ? '몬스터는 주지 않음' : DR.eb === 'all' ? '사냥터 정보 없음' : '일반 · 정예는 주지 않음')],
+    ['상자 1위', bestBox >= 0 ? rateStr(rateOf(G, bestBox)) : '--', bestBox >= 0 ? `${srcShort(G, bestBox)} · ${oneInT(rateOf(G, bestBox), '개')}${G.boxes[srcOf(G, bestBox)][4] ? ' · 조건 지급 의심' : ''}` : '상자에서는 나오지 않음'],
+    ['나오는 곳', nf(src.length) + '곳', `몬스터 ${nf(mons.length)} · 상자 ${nf(bx.length)}${eff.length ? ` · 사냥터 ${nf(eff.length)}` : ''}`]];
+  const srcT = `<div class="tbl" style="margin:0;border:0"><table class="rk drt"><tr><th class="l">출처</th><th class="l">어디서</th><th>확률</th><th>몇 번당 1번</th><th class="hide-s">한 번에</th><th>1,000번당 기대 개수</th></tr>
+    ${src.slice(0, DR.dmore).map(i => { const o = i * 5, d = G.u, hot = i === bestMon || i === bestBox; return `<tr${hot ? ' class="drbest"' : ''}><td class="l">${srcTitle(G, i)}${i === bestMon ? '<span class="cfb c1">몬스터 효율 1위</span>' : i === bestBox ? '<span class="cfb c1">상자 1위</span>' : ''}</td><td class="l drmap">${srcWhere(G, i)}</td>
+      <td><b class="dg">${rateStr(d[o + 2])}</b></td><td>${oneIn(d[o + 2], unitOf(G, i))}</td><td class="hide-s">${amtStr(d[o + 3], d[o + 4])}개</td><td class="dg">${expStr(expPer(G, i) * 1000)}</td></tr>`; }).join('')}</table></div>
+    ${cgMore('dr-dmore', src.length - DR.dmore, '곳')}
+    <div class="sub" style="padding:8px 16px">몬스터는 1마리 처치, 상자는 1개 열기 기준입니다. '조건 지급 의심' 상자는 모든 칸이 100%라 직업 · 조건에 따라 그중 하나만 받을 가능성이 커서 표의 확률을 그대로 믿으면 안 됩니다.</div>`;
   const mapT = eff.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk drt"><tr><th>순위</th><th class="l">사냥터</th><th>효율 (1,000마리당)</th><th>드랍 몬스터</th><th class="l">가장 잘 주는 몬스터</th><th>그 몬스터 드랍율</th></tr>
     ${eff.map((o, k) => `<tr${k === 0 ? ' class="drbest"' : ''}><td class="dg">${k + 1}</td><td class="l">${esc(G.maps[o.p])}${k === 0 ? '<span class="cfb c1">효율 1위</span>' : ''}</td><td><b class="dg">${expStr(o.eff * 1000)}</b>개</td>
-      <td>${nf(o.n)} / ${nf(o.tot)}종</td><td class="l">${monName(G, G.d[o.best * 5])}</td><td class="dg">${rateStr(G.d[o.best * 5 + 2])}</td></tr>`).join('')}</table></div>
-    <div class="sub" style="padding:8px 16px">효율 = 그 사냥터에 나오는 ${DR.eb === 'all' ? '모든' : '일반 · 정예'} 몬스터 종류를 고르게 잡는다고 볼 때 1,000마리당 기대 개수입니다 (몬스터 수 · 리젠 속도는 반영하지 않음). 사냥터 정보가 없는 몬스터(${nf(src.filter(i => !(G.mons[G.d[i * 5]][4] || []).length).length)}종)는 몬스터별 표에만 있습니다.</div>`
-    : `<div class="empty" style="padding:14px 16px">${DR.eb === 'all' ? '이 아이템을 주는 몬스터의 사냥터 정보가 없습니다' : '일반 · 정예 몬스터는 이 아이템을 주지 않습니다 (보스 · 네임드 · 기타만) — 위에서 <b>보스 · 네임드 포함</b>을 누르거나 몬스터별 표를 보세요'}</div>`;
+      <td>${nf(o.n)} / ${nf(o.tot)}종</td><td class="l">${srcTitle(G, o.best)}</td><td class="dg">${rateStr(rateOf(G, o.best))}</td></tr>`).join('')}</table></div>
+    <div class="sub" style="padding:8px 16px">효율 = 그 사냥터에 나오는 ${DR.eb === 'all' ? '모든' : '일반 · 정예'} 몬스터 종류를 고르게 잡는다고 볼 때 1,000마리당 기대 개수입니다 (몬스터 수 · 리젠 속도는 반영하지 않음). 사냥터 정보가 없는 몬스터(${nf(mons.filter(i => !srcMaps(G, i).length).length)}종)와 상자는 출처별 표에만 있습니다.</div>`
+    : `<div class="empty" style="padding:14px 16px">${!mons.length ? '몬스터는 이 아이템을 주지 않습니다 (상자에서만 나옴) — 출처별 표를 보세요' : DR.eb === 'all' ? '이 아이템을 주는 몬스터의 사냥터 정보가 없습니다' : '일반 · 정예 몬스터는 이 아이템을 주지 않습니다 (보스 · 네임드 · 기타만) — 위에서 <b>보스 · 네임드 포함</b>을 누르거나 출처별 표를 보세요'}</div>`;
   return `<div class="drdet">
     <div class="sec">${esc(it[1])} ${gradeTag(G, it[2])} <small>아이템 ID ${it[0]}</small><button class="btn" data-act="dr-close" style="margin-left:auto">목록으로</button></div>
-    ${r.src.length < (G.byItem.get(r.ii) || []).length ? `<div class="sub" style="padding:8px 16px;color:var(--amb)">위에서 고른 조건(사냥터 · 몬스터 구분 · 몬스터/사냥터 검색)에 맞는 드랍처만으로 계산했습니다 (${nf(r.src.length)} / ${nf((G.byItem.get(r.ii) || []).length)}종). 전체를 보려면 [조건 지우기] 후 다시 여세요.</div>` : ''}
+    ${all ? `<div class="sub" style="padding:8px 16px;color:var(--amb)">위에서 고른 조건(출처 · 사냥터 · 몬스터 구분 · 이름 검색)에 맞는 곳만으로 계산했습니다 (${nf(r.src.length)} / ${nf((G.byItem.get(r.ii) || []).length)}곳). 전체를 보려면 [조건 지우기] 후 다시 여세요.</div>` : ''}
     <div class="kpis">${kp.map(([l, v, s]) => `<div class="kpi"><div class="lb">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join('')}</div>
-    <div class="ctrls"><span class="lbl">보기</span>${seg('dr-view', DR.view, [['mon', `몬스터별 ${nf(src.length)}`], ['map', `사냥터별 효율 ${nf(eff.length)}`]])}
-      <span class="lbl">사냥터 효율 계산</span>${seg('dr-eb', DR.eb, [['hunt', '일반 · 정예만'], ['all', '보스 · 네임드 포함']])}</div>
-    ${DR.view === 'map' ? mapT : monT}</div>`;
+    <div class="ctrls"><span class="lbl">보기</span>${seg('dr-view', DR.view, [['src', `출처별 ${nf(src.length)}`], ['map', `사냥터별 효율 ${nf(eff.length)}`]])}
+      ${DR.view === 'map' ? `<span class="lbl">사냥터 효율 계산</span>${seg('dr-eb', DR.eb, [['hunt', '일반 · 정예만'], ['all', '보스 · 네임드 포함']])}` : ''}</div>
+    ${DR.view === 'map' ? mapT : srcT}</div>`;
 }
 async function pageDrop(){
   const G = await loadDrops();
   if(!G) return blank('드랍율 데이터가 없습니다', DROPS_ERR === 'none'
-    ? (D.local ? '프로그램 폴더에서 bat\\4_드랍DB만들기.bat 를 실행해 data\\web\\data\\drops.json 을 만드세요' : '저장소 site 폴더에 drops.l9e 를 올리면 다음 배포부터 보입니다 (사용 설명서 참고)')
+    ? (D.local ? '프로그램 폴더에서 4_드랍DB만들기.bat 를 실행해 data\\web\\data\\drops.json 을 만드세요' : '저장소 site 폴더에 drops.l9e 를 올리면 다음 배포부터 보입니다 (사용 설명서 참고)')
     : esc(DROPS_ERR));
   const res = dropSearch(G);
   const sel = DR.item >= 0 ? res.find(r => r.ii === DR.item) : null;
   const gs = new Set(DR.gs.split(',').filter(Boolean).map(Number));
   const mapOpts = G.maps.map((m, i) => [i, m]).sort((a, b) => a[1].localeCompare(b[1], 'ko'));
-  const ctrls = `<div class="ctrls"><input class="q" data-in="dr-q" value="${esc(DR.q)}" placeholder="아이템 · 몬스터 · 사냥터 이름" style="width:220px">
-      <span class="lbl">찾는 곳</span>${seg('dr-by', DR.by, [['', '전체'], ['item', '아이템'], ['mon', '몬스터'], ['map', '사냥터']])}
-      <span class="sp"></span><span class="lbl">정렬</span><select data-ch="dr-sort">${[['rate', '드랍율 높은 순'], ['grade', '등급 높은 순'], ['src', '드랍 몬스터 많은 순'], ['name', '이름 순']].map(([v, l]) => `<option value="${v}"${DR.sort === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
-    <div class="ctrls"><span class="lbl">등급</span><div class="seg">${G.grades.map((g, i) => `<button data-act="dr-g" data-v="${i}" class="${gs.has(i) ? 'on' : ''}" style="${gs.has(i) ? '' : `color:${GRADE_C[i] || ''}`}">${esc(g)}</button>`).join('')}</div>
-      <span class="lbl">사냥터</span><select data-ch="dr-map"><option value="-1">전체</option>${mapOpts.map(([i, m]) => `<option value="${i}"${DR.map === i ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
-      <span class="lbl">몬스터</span><select data-ch="dr-tier"><option value="-1">전체</option>${G.tiers.map((t, i) => `<option value="${i}"${DR.tier === i ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>
-      ${DR.q || DR.by || DR.map >= 0 || DR.tier >= 0 || DR.gs ? '<button class="btn" data-act="dr-reset">조건 지우기</button>' : ''}</div>`;
-  const list = res.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk drt"><tr><th class="l">아이템</th><th>등급</th><th>최고 드랍율</th><th class="l">가장 잘 주는 몬스터</th><th class="l hide-s">사냥터</th><th>드랍 몬스터</th></tr>
-      ${res.slice(0, DR.more).map(r => { const o = r.best * 5; return `<tr class="rkrow" data-act="dr-item" data-v="${r.ii}" tabindex="0"><td class="l"><b style="color:${GRADE_C[r.it[2]] || ''}">${esc(r.it[1])}</b></td><td>${gradeTag(G, r.it[2])}</td>
-        <td><b class="dg">${rateStr(G.d[o + 2])}</b><div class="sub">${oneInT(G.d[o + 2])}</div></td><td class="l">${monName(G, G.d[o])}</td><td class="l hide-s drmap">${mapNames(G, G.d[o])}</td><td>${nf(r.src.length)}종</td></tr>`; }).join('')}</table></div>
+  const ng = Math.min(G.grades.length, 6);
+  const ctrls = `<div class="ctrls"><input class="q" data-in="dr-q" value="${esc(DR.q)}" placeholder="아이템 · 몬스터 · 상자 · 사냥터 이름" style="width:240px">
+      <span class="lbl">찾는 곳</span>${seg('dr-by', DR.by, [['', '전체'], ['item', '아이템'], ['mon', '몬스터 · 상자'], ['map', '사냥터']])}
+      <span class="sp"></span><span class="lbl">정렬</span><select data-ch="dr-sort">${[['rate', '확률 높은 순'], ['grade', '등급 높은 순'], ['src', '나오는 곳 많은 순'], ['name', '이름 순']].map(([v, l]) => `<option value="${v}"${DR.sort === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div class="ctrls"><span class="lbl">출처</span>${seg('dr-sk', DR.sk, [['', '전체'], ['mon', '몬스터'], ['box', '상자']])}
+      <span class="lbl">등급</span><div class="seg">${G.grades.slice(0, ng).map((g, i) => `<button data-act="dr-g" data-v="${i}" class="${gs.has(i) ? 'on' : ''}" style="${gs.has(i) ? '' : `color:${GRADE_C[i] || ''}`}">${esc(g)}</button>`).join('')}</div>
+      ${DR.sk === 'box' ? '' : `<span class="lbl">사냥터</span><select data-ch="dr-map"><option value="-1">전체</option>${mapOpts.map(([i, m]) => `<option value="${i}"${DR.map === i ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
+      <span class="lbl">몬스터</span><select data-ch="dr-tier"><option value="-1">전체</option>${G.tiers.map((t, i) => `<option value="${i}"${DR.tier === i ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`}
+      ${DR.q || DR.by || DR.map >= 0 || DR.tier >= 0 || DR.gs || DR.sk ? '<button class="btn" data-act="dr-reset">조건 지우기</button>' : ''}</div>`;
+  const list = res.length ? `<div class="tbl" style="margin:0;border:0"><table class="rk drt"><tr><th class="l">아이템</th><th>등급</th><th>최고 확률</th><th class="l">가장 잘 나오는 곳</th><th class="l hide-s">어디서</th><th>나오는 곳</th></tr>
+      ${res.slice(0, DR.more).map(r => `<tr class="rkrow" data-act="dr-item" data-v="${r.ii}" tabindex="0"><td class="l"><b style="color:${GRADE_C[r.it[2]] || ''}">${esc(r.it[1])}</b></td><td>${gradeTag(G, r.it[2])}</td>
+        <td><b class="dg">${rateStr(r.rate)}</b><div class="sub">${oneInT(r.rate, unitOf(G, r.best))}</div></td><td class="l">${srcTitle(G, r.best)}</td><td class="l hide-s drmap">${srcWhere(G, r.best)}</td>
+        <td>${r.nmo ? `몬스터 ${nf(r.nmo)}` : ''}${r.nmo && r.nb ? '<br>' : ''}${r.nb ? `상자 ${nf(r.nb)}` : ''}</td></tr>`).join('')}</table></div>
       ${cgMore('dr-more', res.length - DR.more, '개')}`
-    : '<div class="empty" style="padding:14px 16px">조건에 맞는 아이템이 없습니다</div>';
+    : `<div class="empty" style="padding:14px 16px">조건에 맞는 아이템이 없습니다${G.boxes.length ? '' : ' (이 드랍표에는 상자 내용물이 없습니다)'}</div>`;
+  const b0 = dropBase(G);
   return `<section class="ov fr">${NODES}
-    <div class="bar"><span class="sid g">드랍율</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">몬스터 ${nf(G.mons.length)}종 · 아이템 ${nf(G.items.length)}종</span></div>
-    <div class="drbase"><span>드랍표 기준 <b>${esc(dropBase(G).d || G.ver || '알 수 없음')}</b></span>${dropBase(G).gv ? `<span>게임 버전 <b>${esc(dropBase(G).gv)}</b></span>` : ''}<span>출처 <b>로드나인 PC 클라이언트 데이터</b></span>${dropBase(G).made ? `<span class="sub">표 만든 날 ${esc(dropBase(G).made)}</span>` : ''}</div>
-    ${cgNote(`아이템 이름 · 몬스터 · 사냥터로 찾고, 등급 · 사냥터 · 몬스터 구분으로 좁힐 수 있습니다. 아이템을 누르면 어디서 가장 잘 나오는지 보여 줍니다.
-      <br><b>드랍율</b> = 1마리 처치당 기대 획득 횟수(%) — 낮을 때는 드랍 확률과 같고, 골드처럼 여러 번 나오는 항목은 100%를 넘을 수 있습니다.
+    <div class="bar"><span class="sid g">드랍율</span><span style="margin-left:auto;font-size:12px;color:var(--dim)">몬스터 ${nf(G.mons.length)}종 · 상자 ${nf(G.boxes.length)}종 · 아이템 ${nf(G.items.length)}종</span></div>
+    <div class="drbase"><span>드랍표 기준 <b>${esc(b0.d || G.ver || '알 수 없음')}</b></span>${b0.gv ? `<span>게임 버전 <b>${esc(b0.gv)}</b></span>` : ''}<span>출처 <b>로드나인 PC 클라이언트 데이터</b></span>${b0.made ? `<span class="sub">표 만든 날 ${esc(b0.made)}</span>` : ''}</div>
+    ${cgNote(`아이템 · 몬스터 · 상자 · 사냥터 이름으로 찾고, 출처(몬스터/상자) · 등급 · 사냥터 · 몬스터 구분으로 좁힐 수 있습니다. 아이템을 누르면 어디서 가장 잘 나오는지 보여 줍니다.
+      <br><b>몬스터 드랍율</b> = 1마리 처치당 기대 획득 횟수(%) — 낮을 때는 드랍 확률과 같고, 골드처럼 여러 번 나오는 항목은 100%를 넘을 수 있습니다.
+      <br><b>상자 확률</b> = 상자 1개를 열 때 나올 확률(%) — 여러 칸에서 나오면 합산, 100%를 넘으면 기대 개수. '조건 지급 의심' 상자는 직업 · 조건에 따라 하나만 받을 수 있어 확률을 그대로 믿으면 안 됩니다.
       <br><b>몬스터 효율</b> = 1,000마리 잡을 때 기대 개수(드랍율 × 평균 수량). <b>사냥터 효율</b> = 그 사냥터 몬스터를 고르게 1,000마리 잡을 때 기대 개수 — 기본은 늘 사냥하는 일반 · 정예만 (보스 · 네임드는 가끔 나오므로 따로 고를 수 있음).
       <br>${esc(G.note || '이벤트 한정 드랍 · 레벨 차이 보정 · 서버 보정은 반영하지 않았습니다')}. 게임 패치 뒤에는 데이터를 다시 만들어야 합니다.`)}
     ${ctrls}
@@ -2600,7 +2633,8 @@ document.addEventListener('click', async ev => {
     else if(act === 'cg-msort'){ CG.msort = b.dataset.v; CG.mv = 24; saveCG(); await render(); }
     else if(act === 'dr-by'){ DR.by = b.dataset.v; DR.more = 60; DR.item = -1; saveDR(); await render(); }
     else if(act === 'dr-g'){ const s = new Set(DR.gs.split(',').filter(Boolean)); s.has(b.dataset.v) ? s.delete(b.dataset.v) : s.add(b.dataset.v); DR.gs = [...s].sort().join(','); DR.more = 60; DR.item = -1; saveDR(); await render(); }
-    else if(act === 'dr-reset'){ Object.assign(DR, {q: '', by: '', map: -1, tier: -1, gs: '', item: -1, more: 60}); saveDR(); await render(); }
+    else if(act === 'dr-reset'){ Object.assign(DR, {q: '', by: '', map: -1, tier: -1, gs: '', sk: '', item: -1, more: 60}); saveDR(); await render(); }
+    else if(act === 'dr-sk'){ DR.sk = b.dataset.v; if(DR.sk === 'box'){ DR.map = -1; DR.tier = -1; } DR.more = 60; DR.item = -1; saveDR(); await render(); }
     else if(act === 'dr-item'){ DR.item = Number(b.dataset.v); DR.dmore = 40; saveDR(); await render(); window.scrollTo({top: ($('#main').offsetTop || 0) - 10}); }
     else if(act === 'dr-close'){ DR.item = -1; saveDR(); await render(); }
     else if(act === 'dr-eb'){ DR.eb = b.dataset.v; saveDR(); await render(); }
