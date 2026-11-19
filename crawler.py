@@ -418,6 +418,15 @@ def clearly_other(old, new, gap):
     return False    # 무기 레벨 감소는 마스터리 체인지로 생길 수 있어 다른 캐릭터의 근거로 쓰지 않음
 
 
+REROLL_BP = 200000      # 이 전투력 이하에서 이름 끝에 숫자가 붙은 캐릭터(낫들고23 · 일34 · 난20 …)는 리세마라용 — 끝나면 바로 삭제
+_REROLL_RE = re.compile(r"\D\d+$")
+
+
+def is_reroll(name, bp):
+    """리세마라용 캐릭터로 보이면 True (사용자 기준 2026-11-18: 전투력 20만 이하 + 이름 끝 숫자). 닉네임 변경 연결 · 목록에서 뺌"""
+    return bool(name) and isinstance(bp, (int, float)) and 0 < bp <= REROLL_BP and bool(_REROLL_RE.search(name))
+
+
 def name_norm(n):
     """비교용 이름: 소문자, 숫자 · 기호 · 공백 · 낱자(ㅋ, ㅇ 등) 제거"""
     return re.sub(r"[^a-z가-힣]", "", (n or "").lower())
@@ -914,7 +923,8 @@ class Builder:
 
         gone = [k for k, h in hist.items() if k not in cur and int(k.split("|", 1)[0]) in done_w
                 and h["p"] and h["p"][-1][0] >= today - LINK_DAYS
-                and k.split("|", 1)[1] not in self.alive.get(int(k.split("|", 1)[0]), ())]
+                and k.split("|", 1)[1] not in self.alive.get(int(k.split("|", 1)[0]), ())
+                ]
         new = [k for k in cur if k not in hist]
         # 후보 = 새로 나타난 캐릭터 + 기준 밖에서 처음 보인 캐릭터(extra). extra 는 연결될 때만 오늘 기록에 넣음
         extra = {k: c for k, c in self.extra.items() if k not in cur and k not in hist and c["w"] in done_w}
@@ -939,6 +949,7 @@ class Builder:
             gap = max(1, today - lp[0])
             gn = h.get("on") or gk.split("|", 1)[1]
             oa = o["ach"] or 0
+            rr = is_reroll(gn, o["bp"])
             if oa:
                 lo, hi = bisect.bisect_left(cach, oa * (1 - LG_ACH_DOWN) - 1e-9), bisect.bisect_right(cach, oa * (1 + LG_ACH_DAY * gap) + 1e-9)
             else:
@@ -946,6 +957,8 @@ class Builder:
             l = []
             for nk in ck[lo:hi]:
                 c = cand[nk]
+                if c["w"] == int(gk.split("|", 1)[0]) and c["s"] == h.get("s") and (rr or is_reroll(c["n"], c["bp"])):
+                    continue    # 같은 서버 안 닉네임 변경인데 리세마라용 캐릭터(20만 이하 + 이름 끝 숫자) → 삭제로 봄. 월드 · 서버 이전은 그대로 찾음
                 g = link_gate(o, nf(nk), gap)
                 if not g or not move_ok(gk, h, c):
                     continue
@@ -1095,6 +1108,7 @@ class Builder:
                         if why and why != "이름 일부 같음":
                             rel.append({"w": o["w"], "n": o["n"], "s": o["s"], "g": o["g"] or "", "kind": "같은 월드 현재 캐릭터",
                                         "why": why, "d": today, "bp": o["bp"]})
+                rel = [r for r in rel if not is_reroll(r["n"], r.get("bp"))]   # 리세마라 캐릭터는 연관 대상에서 뺌
                 if rel:
                     order = {"같은 이름": 0, "번호만 다름": 1, "숫자 · 기호만 다름": 2, "이름 일부 같음": 3}
                     korder = {"사라진 캐릭터": 0, "다른 캐릭터의 예전 이름": 0, "같은 월드 현재 캐릭터": 1}
@@ -1489,6 +1503,11 @@ def build_changes(hist, cur, mcodes, today, wname, moves=(), alive=None, jobs=()
         s = (c["s"] if c else h.get("s")) or 0
         sp = c["sp"] if c else (lp[5] if lp else None)
         ach = c["ach"] if c else (lp[2] if lp else None)
+        if bp is not None and bp <= REROLL_BP:     # 리세마라 캐릭터 닉네임 변경은 목록에서 뺌
+            mv_d = {e[0] for e in ev if e[1] in ("월드 이전", "서버 변경")}    # 이전과 함께 바꾼 이름은 남김
+            ev = [e for e in ev if not (e[1] == "닉네임 변경" and e[0] not in mv_d and (is_reroll(e[2], bp) or is_reroll(e[3], bp)))]
+            if not ev:
+                continue
         nm = [[e[0], e[2] or "", e[3] or ""] for e in ev if e[1] == "닉네임 변경"]
         if nm:
             names.append([int(w), n, nm, 1 if c else 0])
@@ -1661,7 +1680,7 @@ def copy_prev(out, prev, log=print):
     os.makedirs(os.path.join(data, "chars"), exist_ok=True)
     os.makedirs(os.path.join(data, "hist"), exist_ok=True)
     os.makedirs(os.path.join(data, "skip"), exist_ok=True)
-    files_extra = ["data/gevents.json", "data/changes.json", "data/watch.json", "data/transfer.json"] + [f"data/skip/{w['code']}.json" for w in meta.get("worlds", []) if w.get("rule")]
+    files_extra = ["data/gevents.json", "data/changes.json", "data/watch.json", "data/transfer.json", "data/drops.json"] + [f"data/skip/{w['code']}.json" for w in meta.get("worlds", []) if w.get("rule")]
     files = ["data/meta.json", "data/moves.json"] + files_extra + [f"data/chars/{w['code']}.json" for w in meta.get("worlds", [])] \
         + [f"data/hist/{i:02d}.json" for i in range(meta.get("shards", SHARDS))]
     out_real = os.path.realpath(out)

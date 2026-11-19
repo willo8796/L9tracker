@@ -102,10 +102,41 @@ def check_password(p):
     return p
 
 
+DROPS_SRC = "drops.l9e"     # 저장소 site 폴더에 올리는 드랍율 데이터 (관리용 키로 잠금 — 공개 저장소에 평문이 올라가지 않게)
+
+
+def drops_key(mk):
+    return hmac.new(mk, b"drops|v1", hashlib.sha256).digest()
+
+
+def unpack_drops(out, mk, log=print):
+    """site/drops.l9e (화면 파일과 함께 복사됨) → data/drops.json (아래에서 비밀번호 키로 다시 잠김). 원본은 배포하지 않음"""
+    src = os.path.join(out, DROPS_SRC)
+    if not os.path.isfile(src) or os.path.islink(src):
+        return False
+    try:
+        with open(src, "rb") as f:
+            raw = unseal_bytes(drops_key(mk), f.read())
+        j = json.loads(raw.decode("utf-8"))
+        if j.get("v") != 1 or not isinstance(j.get("d"), list):
+            raise ValueError("형식이 맞지 않음")
+    except Exception as e:
+        log(f"드랍율 데이터(drops.l9e)를 풀지 못했습니다 — 관리용 키(L9_KEY)로 다시 만드세요: {e}")
+        os.remove(src)
+        return False
+    os.makedirs(os.path.join(out, "data"), exist_ok=True)
+    with open(os.path.join(out, "data", "drops.json"), "wb") as f:
+        f.write(raw)
+    os.remove(src)
+    log(f"드랍율 데이터 반영 ({j.get('ver', '')}, 드랍 {len(j['d']) // 5:,}줄)")
+    return True
+
+
 def seal_dir(out, password, l9_key, log=print):
     mk = master_key(l9_key)
     password = check_password(password)
     dk = data_key(mk, password)
+    unpack_drops(out, mk, log)
     root = os.path.join(out, "data")
     keys = [dk]
     try:       # 이미 잠긴 파일이 있으면(예전 비밀번호) 예전 key.json 으로 풀어서 다시 잠금
@@ -153,7 +184,29 @@ def seal_dir(out, password, l9_key, log=print):
     return n
 
 
+def seal_drops(src, dst, l9_key):
+    """드랍율 파일(dropdb.py 결과)을 관리용 키로 잠가 site/drops.l9e 로 저장 — 이 파일만 저장소에 올림"""
+    with open(src, "rb") as f:
+        raw = f.read()
+    j = json.loads(raw.decode("utf-8"))
+    if j.get("v") != 1 or not isinstance(j.get("d"), list):
+        raise SystemExit("dropdb.py 로 만든 drops.json 이 아닙니다: " + src)
+    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+    with open(dst, "wb") as f:
+        f.write(seal_bytes(drops_key(master_key(l9_key)), raw))
+    print(f"잠금 완료 → {dst} ({os.path.getsize(dst) / 1024:,.0f}KB). 이 파일을 저장소 site 폴더에 올리세요.")
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "drops":     # python seal.py drops data/web/data/drops.json site/drops.l9e
+        src = sys.argv[2] if len(sys.argv) > 2 else os.path.join("data", "web", "data", "drops.json")
+        dst = sys.argv[3] if len(sys.argv) > 3 else os.path.join("site", DROPS_SRC)
+        key = os.environ.get("L9_KEY", "").strip()
+        if not key:
+            import getpass
+            key = getpass.getpass("관리용 키(GitHub Secrets 의 L9_KEY)를 붙여 넣고 Enter (화면에 보이지 않음): ").strip()
+        seal_drops(src, dst, key)
+        return
     out = sys.argv[1] if len(sys.argv) > 1 else "public"
     if not os.path.isdir(os.path.join(out, "data")):
         print("암호화할 데이터가 없습니다:", out)
